@@ -112,17 +112,8 @@ class PluginManager {
 
     async processToolCall(toolName, toolArgs) {
         let executionParam = null;
-        // Special handling for SciCalculator, which expects a raw expression string.
-        if (toolName === "SciCalculator") {
-            if (toolArgs && typeof toolArgs.expression === 'string') {
-                executionParam = toolArgs.expression;
-            } else {
-                throw new Error(`[DistPluginManager] Missing or invalid 'expression' argument for SciCalculator.`);
-            }
-        } else {
-            // Default behavior for other plugins: pass arguments as a JSON string.
-            executionParam = toolArgs ? JSON.stringify(toolArgs) : null;
-        }
+        // Default behavior for all plugins: pass arguments as a JSON string.
+        executionParam = toolArgs ? JSON.stringify(toolArgs) : null;
 
         if (this.debugMode) console.log(`[DistPluginManager] Calling executePlugin for: ${toolName} with prepared param:`, executionParam);
         
