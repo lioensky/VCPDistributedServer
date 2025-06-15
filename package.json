@@ -1,0 +1,19 @@
+{
+  "name": "vcp-distributed-server",
+  "version": "1.0.0",
+  "description": "A distributed server for VCP to provide additional tools.",
+  "main": "VCPDistributedServer.js",
+  "scripts": {
+    "start": "node VCPDistributedServer.js"
+  },
+  "keywords": [
+    "vcp",
+    "distributed"
+  ],
+  "author": "VCP-Team",
+  "license": "ISC",
+  "dependencies": {
+    "dotenv": "^16.4.5",
+    "ws": "^8.17.0"
+  }
+}
