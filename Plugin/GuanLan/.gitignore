@@ -1,0 +1,15 @@
+# 敏感配置（用户私有，勿提交）
+config.env
+
+# Python缓存
+__pycache__/
+*.pyc
+
+# 运行时数据文件（用户私有）
+account.json
+positions.json
+trades.json
+watchlist.json
+
+# 文件锁
+guanlan.lock
