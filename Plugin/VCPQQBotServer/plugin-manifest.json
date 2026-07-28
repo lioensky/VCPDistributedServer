@@ -1,5 +1,5 @@
 {
-  "manifestVersion": "1.1.0",
+  "manifestVersion": "1.0.0",
   "name": "VCPQQBotServer",
   "displayName": "VCP QQBot 单聊/群聊桥接服务",
   "version": "0.1.0",
@@ -147,10 +147,34 @@
       "type": "string",
       "default": "",
       "description": "机器人在QQ群里显示的昵称（用于识别其他机器人@提到本机器人但未生成结构化mention的情况，如Q群管家欢迎语里的纯文本@）。"
+    },
+    "QQBotImageVariantProbe": {
+      "type": "boolean",
+      "description": "是否对QQ入站图片做spec候选探测(研究QQ是否给高清变体)。默认关闭。开启后试QQBotImageVariantSpecs里的spec值,选字节最大的有效图。仅用于一次性研究,确定最佳spec后应关闭。",
+      "default": false
+    },
+    "QQBotImageVariantSpecs": {
+      "type": "string",
+      "description": "探测的spec候选值,逗号分隔(如 0,1,2)。",
+      "default": "0,1,2"
+    },
+    "QQBotImageProbeMaxCandidates": {
+      "type": "integer",
+      "description": "探测最多试几个额外候选(防止无上限下载)。",
+      "default": 3
+    },
+    "QQBotInboundEventAudit": {
+      "type": "boolean",
+      "description": "入站事件审计开关(默认关闭)。开启后记录每个QQ事件的类型/附件结构(脱敏,不记openid/url/rkey/正文),用于判断文件消息是否到达。仅研究用。",
+      "default": false
     }
   },
   "configSchemaDescriptions": {
     "QQBotSystemPrompt": "例如：你是接入 QQ 单聊的 VCPQQBot。你可以自然聊天，也可以使用 VCP 工具协议完成任务。若回复中包含图片 URL，系统会自动转成 QQ 图片发送。",
-    "QQBotAllowList": "留空表示任何单聊用户都可触发 VCP 聊天；生产环境建议填写允许的 openid。"
+    "QQBotAllowList": "留空表示任何单聊用户都可触发 VCP 聊天；生产环境建议填写允许的 openid。",
+    "QQBotImageVariantProbe": "入站图片spec候选探测开关,默认关闭。仅研究用。",
+    "QQBotImageVariantSpecs": "探测的spec候选,逗号分隔。",
+    "QQBotImageProbeMaxCandidates": "探测最多额外候选数。",
+    "QQBotInboundEventAudit": "入站事件审计,默认关闭,脱敏记录事件结构。"
   }
 }

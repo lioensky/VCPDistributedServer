@@ -1,0 +1,35 @@
+{
+  "name": "GuanLan",
+  "displayName": "观澜-A股数据引擎",
+  "version": "3.2.2",
+  "description": "A股智能数据引擎，38+专业命令。支持真实A股费率引擎(佣金/印花税/过户费自动计算)、双数据源容灾(Tushare+AKShare)、filelock跨进程并发安全、ATR动态止损、ETF资金流向适配。新增 position_update 风控参数秒级更新。作者：观澜 & 翔",
+  "author": "观澜 & 翔",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "command": "python main.py"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 120000
+  },
+  "configSchema": [
+    {
+      "name": "TUSHARE_TOKEN",
+      "description": "Tushare API Token，用于基本面/资金流向/板块数据。注册地址：https://tushare.pro",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "BROKER_COMMISSION_STOCK",
+      "description": "股票交易佣金费率（默认万2.5即0.00025，请修改为您券商的真实费率）",
+      "required": false,
+      "type": "string"
+    },
+    {
+      "name": "BROKER_COMMISSION_ETF",
+      "description": "ETF交易佣金费率（默认万2.5即0.00025，请修改为您券商的真实费率）",
+      "required": false,
+      "type": "string"
+    }
+  ]
+}

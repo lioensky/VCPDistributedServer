@@ -488,8 +488,44 @@ function sendWs(payload) {
   return true;
 }
 
+// 入站事件审计(Codex P1-1): 默认关闭,记录事件类型/附件结构,用于判断文件消息是否到达
+const inboundEventAuditLog = [];
+function auditInboundEvent(payload) {
+  if (!normalizeBoolean(config.QQBotInboundEventAudit, false)) return;
+  const t = payload.t;
+  const d = payload.d || {};
+  const atts = Array.isArray(d.attachments) ? d.attachments : [];
+  const audit = {
+    t,
+    hasContent: !!(d.content && String(d.content).trim()),
+    hasAttachments: atts.length > 0,
+    attachmentCount: atts.length,
+    attachments: atts.map(a => ({
+      contentType: a.content_type || a.contentType || null,
+      filename: a.filename || null,
+      size: a.size || null,
+      width: a.width || null,
+      height: a.height || null,
+      hasUrl: !!(a.url)
+      // 不记url/rkey/正文/openid
+    })),
+    isGroup: !!(d.group_openid || d.group_id),
+    isC2C: !!(d.openid || d.author_openid),
+    mentionedBot: (() => {
+      const mentions = Array.isArray(d.mentions) ? d.mentions : [];
+      return mentions.some(m => m.is_you === true || m.bot === true);
+    })()
+  };
+  inboundEventAuditLog.push(audit);
+  if (inboundEventAuditLog.length > 30) inboundEventAuditLog.shift();
+  console.log('[VCPQQBotServer][AUDIT] 事件:', t, '附件:', audit.attachmentCount,
+    JSON.stringify(audit.attachments).slice(0, 300), '@机器人:', audit.mentionedBot);
+}
+
 function handleDispatch(payload) {
   const eventType = payload.t;
+  // Codex P1-1: 入站事件审计(默认关闭,脱敏记录,不记openid/url/rkey/正文)
+  auditInboundEvent(payload);
   if (eventType === 'READY') {
     sessionId = payload.d && payload.d.session_id ? payload.d.session_id : sessionId;
     readyUser = payload.d && payload.d.user ? payload.d.user : readyUser;
@@ -666,10 +702,12 @@ async function handleC2CMessage(event) {
   });
 
   try {
-    const userText = buildUserMessageText(event);
-    appendHistory(event.openid, { role: 'user', content: userText });
+    const { content: currentUserContent, historyContent, userNotice } = await buildUserMessageText(event);
+    appendHistory(event.openid, { role: 'user', content: historyContent });
 
-    const aiText = await callVcpChat(event.openid);
+    let aiText = await callVcpChat(event.openid, currentUserContent);
+    // Codex P1-2: 低清时确定性追加提示(用户一定收到,不依赖模型是否输出)
+    if (userNotice) aiText = aiText + '\n\n' + userNotice;
     appendHistory(event.openid, { role: 'assistant', content: aiText });
 
     addRecent({
@@ -736,18 +774,17 @@ async function handleGroupAtMessage(event) {
 
   try {
     const historyKey = `group_${event.groupOpenid}`;
-    const lines = [
-      `QQ群 openid：${event.groupOpenid}`,
-      `发言成员 openid：${event.memberOpenid}`
-    ];
-    if (event.content) {
-      lines.push('');
-      lines.push('成员消息（群@消息）：');
-      lines.push(event.content);
-    }
-
-    appendHistory(historyKey, { role: 'user', content: lines.join('\n') });
-    const aiText = await callVcpChat(historyKey);
+    // 统一用 buildUserMessageText 处理(含图片附件多模态),补群聊上下文
+    const groupEvent = {
+      openid: historyKey,
+      content: event.content ? `QQ群 openid：${event.groupOpenid}\n发言成员 openid：${event.memberOpenid}\n\n成员消息（群@消息）：\n${event.content}` : `QQ群 openid：${event.groupOpenid}\n发言成员 openid：${event.memberOpenid}`,
+      attachments: event.attachments,
+      author: null
+    };
+    const { content: groupUserContent, historyContent: groupHistoryContent, userNotice: groupUserNotice } = await buildUserMessageText(groupEvent);
+    appendHistory(historyKey, { role: 'user', content: groupHistoryContent });
+    let aiText = await callVcpChat(historyKey, groupUserContent);
+    if (groupUserNotice) aiText = aiText + '\n\n' + groupUserNotice;
     appendHistory(historyKey, { role: 'assistant', content: aiText });
 
     addRecent({
@@ -829,7 +866,160 @@ function summarizeAttachments(attachments) {
   return `[附件 ${attachments.length} 个]`;
 }
 
-function buildUserMessageText(event) {
+// 下载QQ图片附件,转base64 data URL(公网可下载,无需鉴权)。
+// 识图模型直接读data URL,不依赖AI服务商拉QQ域名(国内域名可能拉不到)。
+// ===== 图片下载与图源探测(Codex方案第一阶段)=====
+const IMAGE_MAX_BYTES = 12 * 1024 * 1024;      // 单图上限 12MiB
+const IMAGE_MAX_COUNT = 3;                      // 单次最多 3 张
+const IMAGE_TOTAL_MAX_BYTES = 16 * 1024 * 1024; // 总字节预算 16MiB
+const IMAGE_QUALITY_THRESHOLD = { minLongEdge: 1024, minPixels: 800000, minBytes: 30 * 1024 };
+
+// 图片魔数校验(防伪造content-type)
+function detectImageMime(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf.length >= 12 && buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'image/webp';
+  return null;
+}
+
+// 用 sharp 读宽高(无 sharp 返回 null)
+// 真异步读取图片宽高/像素(Codex P1-3: 不能只看字节数)
+async function getImageDimensions(buf) {
+  if (!sharp || !buf) return null;
+  try {
+    const meta = await sharp(buf).metadata();
+    const width = meta.width || 0;
+    const height = meta.height || 0;
+    return { width, height, pixels: width * height, longEdge: Math.max(width, height) };
+  } catch (_) { return null; }
+}
+
+// 判断附件是否为图片(含 octet-stream 但文件名是图片后缀的情况)
+function isImageAttachment(att) {
+  const ct = String(att?.content_type || att?.contentType || '');
+  if (ct.startsWith('image/')) return true;
+  // application/octet-stream 但文件名是图片后缀
+  if (/^(application\/octet-stream|binary\/octet-stream)$/i.test(ct) &&
+      /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(att?.filename || ''))) return true;
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(att?.filename || ''));
+}
+
+// 下载单个 URL,校验 host/重定向/MIME/魔数/大小,返回 {dataUrl, bytes, mime} 或 null
+async function fetchImageCandidate(url, contentTypeHint) {
+  let finalUrl = url;
+  try {
+    const u = new URL(url);
+    // 允许QQ官方图片域名:群聊 multimedia.nt.qq.com.cn、单聊 grouptalk.c2c.qq.com 等
+    // 统一放行 *.qq.com / *.qq.com.cn(QQ官方域名),拒绝其他外部host
+    const host = u.host.toLowerCase();
+    const isQqHost = host === 'multimedia.nt.qq.com.cn' || host.endsWith('.qq.com.cn') || host.endsWith('.qq.com');
+    if (u.protocol !== 'https:' || !isQqHost) {
+      warn('图片URL host非法,拒绝下载:', u.host);
+      return null;
+    }
+  } catch (_) {
+    warn('图片URL解析失败:', String(url).slice(0, 80));
+    return null;
+  }
+  try {
+    const resp = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 20000,
+      maxContentLength: IMAGE_MAX_BYTES,
+      // Codex P2: QQ直链不需要跳转,禁用重定向防SSRF到外部host
+      maxRedirects: 0,
+      validateStatus: s => s === 200
+    });
+    const buf = Buffer.from(resp.data);
+    if (buf.length === 0 || buf.length > IMAGE_MAX_BYTES) {
+      warn('图片字节超限或为空:', buf.length);
+      return null;
+    }
+    // 魔数校验(优先于content-type,防伪造)
+    const magicMime = detectImageMime(buf);
+    if (!magicMime) {
+      warn('图片魔数校验失败,非真图片:', buf.length, '字节');
+      return null;
+    }
+    const ct = magicMime;
+    // 读真实宽高(异步)
+    const dims = await getImageDimensions(buf);
+    return {
+      dataUrl: `data:${ct};base64,${buf.toString('base64')}`,
+      bytes: buf.length, mime: ct,
+      width: dims ? dims.width : 0,
+      height: dims ? dims.height : 0,
+      pixels: dims ? dims.pixels : 0,
+      longEdge: dims ? dims.longEdge : 0
+    };
+  } catch (e) {
+    warn('下载图片候选失败:', String(url).slice(0, 80), e.message);
+    return null;
+  }
+}
+
+// 对一张QQ图片附件做图源探测:先下载事件原始URL(spec=0),若开启探测则试其他spec候选,
+// 选像素/字节最大的有效图。返回 {dataUrl, bytes, mime, spec} 或 null。
+async function downloadImageWithProbe(att) {
+  if (!att || !att.url) return null;
+  const probeEnabled = normalizeBoolean(config.QQBotImageVariantProbe, false);
+  const specsRaw = String(config.QQBotImageVariantSpecs || '0,1,2').split(',').map(s => s.trim()).filter(Boolean);
+  const maxCandidates = normalizeInteger(config.QQBotImageProbeMaxCandidates, 3);
+
+  const candidates = [];
+  // 始终先下载原始URL
+  const orig = await fetchImageCandidate(att.url, att.content_type || att.contentType);
+  if (orig) candidates.push({ ...orig, spec: 'orig' });
+
+  // 探测:替换spec参数(仅在probeEnabled时)
+  if (probeEnabled && orig) {
+    let tried = 0;
+    for (const spec of specsRaw) {
+      if (tried >= maxCandidates) break;
+      if (spec === '0') continue; // orig已是spec=0
+      try {
+        const u = new URL(att.url);
+        u.searchParams.set('spec', spec);
+        const cand = await fetchImageCandidate(u.toString(), att.content_type);
+        if (cand) candidates.push({ ...cand, spec });
+        tried++;
+      } catch (_) {}
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  // 选字节最大的(像素数需sharp异步读,这里用字节近似;字节大通常像素多)
+  candidates.sort((a, b) => b.bytes - a.bytes);
+  const best = candidates[0];
+
+  // 脱敏日志:只记元数据,不记url/rkey
+  const probeNote = probeEnabled ? ` (探测${candidates.length}候选: ${candidates.map(c => c.spec+'='+c.bytes+'B').join(', ')})` : '';
+  if (debugMode) console.log('[VCPQQBotServer] 图片下载:', best.bytes, '字节', best.mime, 'spec=' + best.spec + probeNote);
+
+  return {
+    dataUrl: best.dataUrl, bytes: best.bytes, mime: best.mime, spec: best.spec,
+    width: best.width || 0, height: best.height || 0, pixels: best.pixels || 0, longEdge: best.longEdge || 0
+  };
+}
+
+// 判断图片质量是否达标(Codex P1-3: 像素/最长边/字节三者共同判断)
+function isImageQualityAcceptable(imgInfo) {
+  if (!imgInfo) return false;
+  const { bytes, pixels, longEdge } = imgInfo;
+  const t = IMAGE_QUALITY_THRESHOLD;
+  // 任一维度低于阈值即判为低清
+  if (longEdge > 0 && longEdge < t.minLongEdge) return false;
+  if (pixels > 0 && pixels < t.minPixels) return false;
+  if (bytes < t.minBytes) return false;
+  return true;
+}
+
+async function buildUserMessageText(event) {
+  // 返回 {content, historyContent}:
+  //   content: 当前请求用(含完整image_url,让模型识图)
+  //   historyContent: 存历史用(图片脱敏为文本,避免8轮重传base64爆上下文)
   const lines = [];
   lines.push(`QQ 单聊用户 openid：${event.openid}`);
   if (event.author && Object.keys(event.author).length > 0) {
@@ -840,14 +1030,69 @@ function buildUserMessageText(event) {
     lines.push('用户消息：');
     lines.push(event.content);
   }
-  if (event.attachments && event.attachments.length > 0) {
+
+  const imageAtts = (event.attachments || []).filter(isImageAttachment);
+  const otherAtts = (event.attachments || []).filter(a => !isImageAttachment(a));
+
+  const imageParts = [];
+  const imageInfos = [];
+  let totalBytes = 0;
+  let skippedDueToLimit = false;
+
+  if (imageAtts.length > 0) {
+    const allowed = imageAtts.slice(0, IMAGE_MAX_COUNT);
+    if (imageAtts.length > IMAGE_MAX_COUNT) skippedDueToLimit = true;
+
+    for (const att of allowed) {
+      if (totalBytes >= IMAGE_TOTAL_MAX_BYTES) { skippedDueToLimit = true; break; }
+      const info = await downloadImageWithProbe(att);
+      if (info) {
+        imageParts.push({ type: 'image_url', image_url: { url: info.dataUrl } });
+        imageInfos.push(info);
+        totalBytes += info.bytes;
+      }
+    }
+
+    if (imageParts.length > 0) {
+      lines.push('');
+      const qualOk = imageInfos.every(isImageQualityAcceptable);
+      if (!qualOk) {
+        // 质量不达标:不假装看清,提示用户发原图/文件
+        lines.push(`(用户发送了 ${imageParts.length} 张图片,但QQ给的是压缩预览图,细节可能丢失。若需精确识别,请勾选原图发送或把截图作为文件发送。)`);
+      } else {
+        lines.push(`(用户发送了 ${imageParts.length} 张图片,见下方image_url)`);
+      }
+    }
+    if (skippedDueToLimit) {
+      lines.push('(部分图片因数量/字节上限被跳过)');
+    }
+  }
+
+  if (otherAtts.length > 0) {
     lines.push('');
-    lines.push('用户发送的附件：');
-    event.attachments.forEach((att, index) => {
+    lines.push('用户发送的其他附件：');
+    otherAtts.forEach((att, index) => {
       lines.push(`${index + 1}. ${JSON.stringify(att)}`);
     });
   }
-  return lines.join('\n');
+
+  const textStr = lines.join('\n');
+  const textPart = { type: 'text', text: textStr };
+
+  if (imageParts.length > 0) {
+    // 当前请求:多模态数组(含完整image_url)
+    const content = [textPart, ...imageParts];
+    // 历史:脱敏,图片替换为简短文本(避免重传base64)
+    const historyContent = textStr + `\n[本轮已接收并处理 ${imageParts.length} 张图片;如需继续分析细节,请用户重新发送原图或文件。]`;
+    // 质量评估(Codex P1-2: 确定性低清提示)
+    const allAcceptable = imageInfos.every(isImageQualityAcceptable);
+    const imageQuality = allAcceptable ? 'acceptable' : 'low';
+    const userNotice = allAcceptable ? null
+      : '我已收到图片,但 QQ 提供的是压缩预览图,细小文字无法可靠辨认。请勾选原图发送,或将截图作为文件发送。';
+    return { content, historyContent, imageQuality, userNotice };
+  }
+  // 纯文字:content和historyContent相同(字符串)
+  return { content: textStr, historyContent: textStr, imageQuality: 'none', userNotice: null };
 }
 
 function appendHistory(openid, message) {
@@ -863,15 +1108,24 @@ function getHistory(openid) {
   return histories.get(String(openid)) || [];
 }
 
-async function callVcpChat(openid) {
+async function callVcpChat(openid, currentContent = null) {
   const port = config.PORT;
   const key = config.Key;
   if (!port || !key) throw new Error('VCP PORT 或 Key 未注入。');
 
   const systemPrompt = String(config.QQBotSystemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+  // 历史用脱敏版(不含图片base64),当前请求用完整content(含image_url)让模型识图
+  const history = getHistory(openid);
+  // 历史最后一条是当前user(脱敏),若有currentContent则替换为完整版
+  let userMessages;
+  if (currentContent !== null && history.length > 0 && history[history.length - 1].role === 'user') {
+    userMessages = [...history.slice(0, -1), { role: 'user', content: currentContent }];
+  } else {
+    userMessages = history;
+  }
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...getHistory(openid)
+    ...userMessages
   ];
 
   const payload = {
