@@ -115,6 +115,11 @@ def _sina_realtime(symbol):
 
 def _sina_batch_quotes(symbols):
     """新浪API批量获取实时行情"""
+    # 修复：兼容字符串格式的symbols（逗号分隔 → 列表）
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(',') if s.strip()]
+    elif not isinstance(symbols, list):
+        symbols = list(symbols) if symbols else []
     headers = {'Referer': 'https://finance.sina.com.cn', 'User-Agent': 'Mozilla/5.0'}
     results = []
     batch_size = 80
@@ -198,12 +203,7 @@ def _get_spot_data():
 
 # ========== Tushare HTTP API适配层 ==========
 
-TUSHARE_TOKEN = os.environ.get('TUSHARE_TOKEN', '')
-
-# 佣金费率配置（支持用户在 config.env 中自定义）
-# 默认万2.5(0.00025)，最低5元。印花税和过户费为硬编码(全国统一)
-COMMISSION_RATE_STOCK = float(os.environ.get('BROKER_COMMISSION_STOCK', 0.00025))
-COMMISSION_RATE_ETF = float(os.environ.get('BROKER_COMMISSION_ETF', 0.00025))
+TUSHARE_TOKEN = "73901b71586dfd0eac18184b98d8f3d2265a82e6ba50200984a68733"
 
 
 def _tushare_api(api_name, params, fields=''):
@@ -1238,8 +1238,8 @@ def watchlist_add(code, name=""):
     for s in stocks:
         if s["code"] == code:
             return {"status": "exists", "message": f"{code}已在自选股中"}
-    if not name:
-        name = code
+    if not name or name == code:
+        name = _get_name(code) or code  # 主动获取真名，失败则用代码兜底
     stocks.append({
         "code": code,
         "name": name,
@@ -1266,7 +1266,9 @@ def watchlist_show():
     # 自动修复乱码名称
     changed = False
     for s in stocks:
-        if '?' in str(s.get('name', '')):
+        # 修复：名称含?或等于代码时，自动从新浪获取真名
+        current_name = str(s.get('name', ''))
+        if '?' in current_name or current_name == s.get('code', ''):
             new_name = _get_name(s['code'])
             if new_name and '?' not in new_name:
                 s['name'] = new_name
@@ -1319,6 +1321,8 @@ def read_account():
     """读取账户资金信息"""
     _path = ACCOUNT_PATH
     if not os.path.exists(_path):
+        _path = r"G:\VCPSystem\VCP\VCPToolBox\Plugin\GuanLan\account.json"
+    if not os.path.exists(_path):
         return {"total_capital": 0, "available_cash": 0, "updated": ""}
     try:
         with open(_path, 'r', encoding='utf-8') as f:
@@ -1329,6 +1333,8 @@ def read_account():
 
 def save_account(data):
     _path = ACCOUNT_PATH
+    if not os.path.exists(os.path.dirname(_path)):
+        _path = r"G:\VCPSystem\VCP\VCPToolBox\Plugin\GuanLan\account.json"
     with open(_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1351,14 +1357,16 @@ def account_set(total_capital, available_cash=None):
 
 
 def _get_name(symbol):
-    """从新浪行情获取股票名称（解决中文乱码问题）"""
+    """从新浪行情获取股票名称（解决中文乱码问题）。
+    注意：失败时返回空字符串''，不要返回symbol本身，否则上层无法判断是否真的修复了。
+    """
     try:
         q = _sina_realtime(symbol)
         if q and q.get("名称"):
             return q["名称"]
     except Exception:
         pass
-    return symbol
+    return ''
 
 
 @synchronized_data
@@ -1369,7 +1377,7 @@ def position_add(symbol, name, cost, shares, stop_loss, target, reason=""):
             return {"status": "exists", "message": f"{symbol}已有活跃持仓"}
     
     if not name or name == symbol or '?' in str(name):
-        name = _get_name(symbol)
+        name = _get_name(symbol) or symbol  # 获取失败时用代码兜底
     
     today = datetime.now().strftime("%Y-%m-%d")
     
@@ -1387,9 +1395,9 @@ def position_add(symbol, name, cost, shares, stop_loss, target, reason=""):
     })
     save_positions(positions)
     
-    # === 扣减可用资金 (真实费率 v3.2.2) ===
-    # 佣金：读取用户配置，最低5元
-    comm_rate = COMMISSION_RATE_ETF if symbol.startswith(('5', '159')) else COMMISSION_RATE_STOCK
+    # === 扣减可用资金 (真实费率 v3.2.1) ===
+    # 佣金：股票万2.854，ETF万2.5，最低5元
+    comm_rate = 0.00025 if symbol.startswith(('5', '159')) else 0.0002854
     comm_fee = max(float(cost) * int(shares) * comm_rate, 5)
     # 过户费：沪市双边万0.1
     transfer_fee = float(cost) * int(shares) * 0.00001 if symbol.startswith(('6', '5', '9', '11', '13')) else 0
@@ -1446,9 +1454,9 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
         return {"status": "error", "message": f"卖出数量无效(shares={shares})"}
     today = datetime.now().strftime("%Y-%m-%d")
     
-    # === 真实A股费率计算引擎 v3.2.2 ===
-    # 1. 佣金：读取用户配置，最低5元
-    comm_rate = COMMISSION_RATE_ETF if symbol.startswith(('5', '159')) else COMMISSION_RATE_STOCK
+    # === 真实A股费率计算引擎 v3.2.1 ===
+    # 1. 佣金：股票万2.854，ETF万2.5，最低5元
+    comm_rate = 0.00025 if symbol.startswith(('5', '159')) else 0.0002854
     raw_amount = sell_price * close_shares
     comm_fee = max(raw_amount * comm_rate, 5)
     # 2. 印花税：千1(0.1%)，仅股票卖出收取，ETF免收
@@ -2981,7 +2989,7 @@ def main():
             out = {"status": "success", "result": daily_report()}
 
         elif action == "watchlist_add":
-            name = params.get("name", "")
+            name = cmd.get("name", "") or params.get("name", "")
             if not symbol:
                 out = {"status": "error", "message": "缺少symbol参数"}
             else:

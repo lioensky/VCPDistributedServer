@@ -1,5 +1,8 @@
-## 工具调用规则
-通过 GuanLan 插件调用 A股数据引擎（v3.2），支持的查询类型：
+# VCP 投研工具箱能力收纳
+这里收纳了的A股数据引擎和深度投研系统的调用说明。
+
+## 1. A股数据引擎 (GuanLan v3.1)
+Agent 通过 GuanLan 插件调用 A股数据引擎（v3.1），支持的查询类型：
 
 ### 快速查询
 - `realtime_quote`：个股实时行情
@@ -14,13 +17,12 @@
   - 返回技术面综合判断
 
 ### 资金分析
-- `capital_flow`：个股/ETF资金流向（主力/超大单/大单/中单/小单，近5日趋势）
-  - 个股数据源：Tushare moneyflow
-  - ETF数据源：AKShare fund_etf_spot_em（自动识别5开头/159开头）
+- `capital_flow`：个股资金流向（主力/超大单/大单/中单/小单，近5日趋势）
+  - 数据源：Tushare moneyflow（ETF不覆盖）
 
 ### 综合分析
 - `full_analysis`：一次性拉取行情+技术面+基本面+资金面+daily_basic(PE/PB/换手率/量比)
-  - Agent整合所有数据后给出明确建议
+  - Agent 整合所有数据后给出明确建议
 
 ### 自选股管理
 - `watchlist_add`：添加自选股（symbol + name）
@@ -36,8 +38,6 @@
   - 自动返还可用资金（卖出价×数量-佣金）
   - 自动写入交易记录
 - `position_show`：查看当前活跃持仓
-- `position_update`：更新活跃持仓的风控参数（symbol + stop_loss + target）
-  - 秒级更新，不走文件修改，无安全审批拦截
 
 ### 交易记录（v2.6+）
 - `trade_history`：查看完整交易历史（可按symbol筛选）
@@ -48,8 +48,8 @@
 - `account_show`：查看账户资金（总资本/可用资金）
 
 ### 组合概览（v2.6+）
-- `portfolio_summary`：一次性拉取持仓+实时价格+盈亏+距止损/目标距离+账户资金+总资产+总盈亏+ATR动态止损参考线
-  - **当用户问"我的持仓"或"账户情况"时，直接用这个命令**
+- `portfolio_summary`：一次性拉取持仓+实时价格+盈亏+距止损/目标距离+账户资金+总资产+总盈亏
+  - **主人问"我的持仓"或"账户情况"时，直接用这个命令**
 
 ### 盯盘扫描（v2.0）
 - `scan_anomalies`：7类异动检测 + 持仓监控（止损/目标触发提醒）
@@ -59,10 +59,13 @@
 
 ### 选股框架（v3.0）
 - `market_check`：大盘环境判断（沪深300趋势：多头/空头/缠绕 → 对应操作建议）
-- `stock_screen`：个股三问筛选 + 禁买清单
-  - 禁买：市值<100亿、RSI>70、价格>布林上轨、均线空头排列
-  - 三问：Q1趋势向上？Q2公司能赚钱(ROE/PE/PB)？Q3价格合理(PE/RSI/MACD)？
-  - 返回 PASS / REJECT + 具体原因
+- `stock_screen`：个股三问筛选 + 禁买清单（参数：`symbol`，单只个股）
+  - **禁买清单（任一触发即REJECT）**：市值<100亿 / RSI>70 / 价格>布林上轨 / 均线空头排列(MA5<MA20<MA60)
+  - **Q1 趋势向上**（需同时满足）：MA5>MA20 且 MACD柱>0
+  - **Q2 公司能赚钱**（需同时满足）：预估ROE>=3% 且 PE(TTM)<=30 且 PB/ROE<=0.15
+  - **Q3 价格合理**（需同时满足）：PE(TTM)<=25 且 RSI<=65 且 MACD柱>=0
+  - ⚠ Q3的RSI阈值(65)比禁买清单(70)更严格，RSI在65-70之间不会被禁买但无法通过Q3
+  - 返回 PASS（三问全通过且不触发禁买） / REJECT + 具体原因
 
 ### 回测引擎（v3.1）
 - `backtest`：策略历史回测（symbol + params: start_date/end_date/strategy/initial_capital）
@@ -95,7 +98,56 @@
   - 6类信号：accelerating(加速流入) / decelerating(加速流出) / uptrend(持续上行) / downtrend(持续下行) / rebounding(超跌反弹) / pulling_back(高位回调)
   - 返回Top5强势/弱势 + 全行业明细
 
-### 市场温度计与增强（v3.2）
-- `market_temperature`：市场情绪综合指标（涨跌停+涨跌比+换手率+成交额→0-100评分）
-- `trade_stats_monthly`：月度复盘（按月/胜率/盈亏比统计）
-- `update_trailing_stops`：批量更新持仓的ATR动态跟踪止损线
+---
+
+## 2. 深度投研系统 (TradingAgents-CN)
+通过 PowerShellExecutor 调用容器内 ta_run4.py 执行多Agent深度分析。
+
+### 主路径：容器直调（路径B，所有标的通用）
+
+**Step 1: 后台启动分析**
+```
+docker exec tradingagents-backend bash -c "nohup python /app/data/ta_run4.py {symbol} {date} > /app/data/ta_output_{symbol}.log 2>&1 &"
+```
+
+**Step 2: 轮询日志**（每30-55秒读一次，直到出现 [SAVED] Result saved）
+```
+Start-Sleep -Seconds 55
+docker exec tradingagents-backend tail -10 /app/data/ta_output_{symbol}.log
+```
+
+**Step 3: 读取结果JSON**
+```
+docker exec tradingagents-backend python -c "import json; f=open('/app/data/analysis_result.json','r'); d=json.load(f); print(json.dumps(d.get('decision',{}), ensure_ascii=False)); print(d.get('state_reports',{}).get('final_trade_decision','')[:600])"
+```
+
+### 深度等级
+默认使用 max_debate_rounds=1（相当于深度1级快速），耗时约8-10分钟。---
+
+## 3. 全球金融数据信源聚合 (DigitalOracle v1.0)
+基于 Digital Oracle 上游库封装的同步插件。一键拉取全球宏观、利率、商品、股票、加密、预测市场与期权数据。
+
+### 一键全球宏观面板
+- `GetGlobalMacroDashboard`：并行抓取恐惧贪婪指数+美联储利率概率+美债收益率+黄金原油+比特币+核心股指
+  - risk_assets：附加风险资产列表（如 SPY,QQQ,GC=F）
+  - coin_ids：加密资产列表（如 bitcoin,ethereum）
+  - countries：央行政策利率国家代码（如 US,CN,JP,EU）
+
+### 信源列表查询
+- `ListProviders`：列出全部可用金融信源及参数说明
+
+### 定向数据抓取
+- `FetchMarketData`：指定信源拉取数据
+  - provider/source：信源标识（polymarket/yahoo/treasury/cftc/coingecko/deribit_futures/deribit_options/fear_greed/cme_fedwatch/worldbank/bis/web/yfinance_options/edgar）
+  - params（JSON字符串）：传给信源的参数
+  - 常见参数：polymarket(slug_contains/limit)、yahoo(symbol/interval/limit/start_date/end_date)、treasury(curve_kind/year)、cftc(commodity_name/limit)、web(query)、yfinance_options(ticker/expiration)、edgar(ticker/limit)
+
+### 应用场景
+- 盘前建立全球宏观基准（情绪+利率+大宗商品）
+- 验证A股板块逻辑（如黄金/铜价验证有色板块）
+- 监控外围风险事件（预测市场/期权IV/恐惧贪婪指数）
+
+### 注意事项
+- Yahoo Finance 有请求频率限制，高峰期可能被限流（429 Too Many Requests）
+- FedWatch 和加密期限结构耗时较长，可能超时
+- 推荐先调用 GetGlobalMacroDashboard 建立总览，再用 FetchMarketData 定向深挖
