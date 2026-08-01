@@ -1,0 +1,45 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "GodotBridge",
+  "version": "1.0.0",
+  "displayName": "Godot MCP 桥接器",
+  "description": "作为标准 MCP Client 连接 Godot MCP Native 插件（默认 http://127.0.0.1:9080/mcp），让 VCP Agent 通过渐进式工具发现来读写 Godot 项目的场景、脚本、节点、资源，并控制编辑器与运行时调试。",
+  "author": "ATRI",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node GodotBridge.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 60000
+  },
+  "configSchema": {
+    "GODOT_MCP_URL": {
+      "type": "string",
+      "description": "Godot MCP Native 的 Streamable HTTP 端点，默认 http://127.0.0.1:9080/mcp。"
+    },
+    "GODOT_MCP_TOKEN": {
+      "type": "string",
+      "description": "可选。Godot 侧启用 auth_enabled 时的 Bearer Token。"
+    },
+    "REQUEST_TIMEOUT_MS": {
+      "type": "integer",
+      "description": "单次 MCP 请求超时（毫秒），默认 30000。"
+    },
+    "MCP_PROTOCOL_VERSION": {
+      "type": "string",
+      "description": "MCP 协议版本号，默认 2025-06-18。"
+    }
+  },
+  "capabilities": {
+    "systemPromptPlaceholders": [],
+    "invocationCommands": [
+      {
+        "commandIdentifier": "GodotBridge",
+        "description": "通过 command 字段选择子命令来操作 Godot 项目。为节约上下文，请遵循渐进式发现：先 list_domains 看领域，再 discover_tools 看某领域工具，需要时 get_tool_schema 查参数，最后 call_tool 执行。\n\n【子命令】\n- status: 检查与 Godot MCP 的连接及可用工具总数。无需其它参数。\n- list_domains: 列出所有工具领域（node/script/scene/editor/debug/runtime/project/other）及各自工具数量。\n- discover_tools: 列出指定领域的工具名与简介。参数 domain (字符串, 必需)。\n- get_tool_schema: 查看单个工具的完整参数 Schema。参数 tool (字符串, 必需)。\n- call_tool: 调用任意 Godot MCP 工具。参数 tool (字符串, 必需)、arguments (JSON 字符串或对象, 可选)。\n\n【示例：查看场景树】\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GodotBridge「末」,\ncommand:「始」call_tool「末」,\ntool:「始」get-scene-tree「末」,\narguments:「始」{}「末」\n<<<[END_TOOL_REQUEST]>>>\n\n【示例：修改节点属性】\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」GodotBridge「末」,\ncommand:「始」call_tool「末」,\ntool:「始」update-node-property「末」,\narguments:「始」{\"node_path\":\"/root/Player\",\"property\":\"speed\",\"value\":300}「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ],
+    "responseFormatToAI": "Godot MCP 返回：\n{result}"
+  }
+}
