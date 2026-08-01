@@ -1,0 +1,9 @@
+{
+  "name": "godot-bridge",
+  "version": "1.0.0",
+  "description": "VCP GodotBridge - MCP client plugin for Godot MCP Native",
+  "main": "GodotBridge.js",
+  "author": "ATRI",
+  "license": "MIT",
+  "dependencies": {}
+}

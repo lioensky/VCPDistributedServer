@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-07-31T12:09:07.330650+00:00",
+  "generatedAt": "2026-08-01T15:03:51.595280+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -56,6 +56,26 @@
       "icon": "extension",
       "category": "tool",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitOperator/GitOperator.zip"
+    },
+    {
+      "name": "GodotBridge",
+      "displayName": "Godot MCP 桥接器",
+      "description": "作为标准 MCP Client 连接 Godot MCP Native 插件（默认 http://127.0.0.1:9080/mcp），让 VCP Agent 通过渐进式工具发现来读写 Godot 项目的场景、脚本、节点、资源，并控制编辑器与运行时调试。",
+      "version": "1.0.0",
+      "author": "ATRI",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GodotBridge/GodotBridge.zip"
+    },
+    {
+      "name": "GodotEventReceiver",
+      "displayName": "Godot 事件接收器",
+      "description": "二期反向通道：作为 WebSocket 服务端接收来自 Godot 侧 godot_vcp_bridge 插件主动推送的运行时/编辑器事件（服务器启停、工具执行、错误、日志、游戏内自定义事件），并转发到 VCP 前端广播。与 GodotBridge（请求-响应）物理隔离。",
+      "version": "1.0.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "service",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GodotEventReceiver/GodotEventReceiver.zip"
     },
     {
       "name": "GrokVideoGen",
