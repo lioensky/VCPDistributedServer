@@ -1,7 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-观澜 Plugin A - A股数据引擎 (v3.2)
-v3.2: 市场温度计+月度复盘+ATR跟踪止损+ETF适配+filelock跨进程锁
+GuanLan Plugin - A股智能数据引擎 (v4.0.0)
+v4.0: 五风格组分路由选股框架+110行业映射+历史分位数估值+PEG+版本戳[fv:hash8]
+v3.2: 市场温度计+月度复盘+ATR跟踪止损+ETF适配+filelock跨进程锁+真实费率引擎
 v3.1: DataHub双源容灾+回测引擎+事件异动+舆情分析+压力测试+板块轮动
 v2.x: 新浪源+Tushare API+异动扫描+自选股+持仓管理+选股框架
 """
@@ -203,7 +204,7 @@ def _get_spot_data():
 
 # ========== Tushare HTTP API适配层 ==========
 
-TUSHARE_TOKEN = "73901b71586dfd0eac18184b98d8f3d2265a82e6ba50200984a68733"
+TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
 
 
 def _tushare_api(api_name, params, fields=''):
@@ -248,6 +249,72 @@ def _get_daily_basic(symbol):
     latest = data['items'][0]
     result = dict(zip(fields, latest))
     return result
+
+
+def _get_valuation_percentile(symbol, years=5):
+    """获取PE/PB历史分位数（默认5年）"""
+    ts_code = _ts_code(symbol)
+    from datetime import datetime, timedelta
+    end_date = datetime.now().strftime('%Y%m%d')
+    start_date = (datetime.now() - timedelta(days=365 * years)).strftime('%Y%m%d')
+    data = _tushare_api('daily_basic',
+        {'ts_code': ts_code, 'start_date': start_date, 'end_date': end_date},
+        'ts_code,trade_date,close,pe,pe_ttm,pb')
+    if not data or not data.get('items'):
+        log(f"valuation_percentile: Tushare daily_basic无数据({symbol})")
+        return None
+    fields = data.get('fields', [])
+    items = data.get('items', [])
+    if len(items) < 30:
+        log(f"valuation_percentile: 样本不足({symbol}), 仅{len(items)}条")
+        return None
+    pe_list, pb_list, pe_ttm_list, dates = [], [], [], []
+    for item in items:
+        row = dict(zip(fields, item))
+        dates.append(row.get('trade_date', ''))
+        pe_list.append(row.get('pe'))
+        pe_ttm_list.append(row.get('pe_ttm'))
+        pb_list.append(row.get('pb'))
+    latest = dict(zip(fields, items[0]))
+    latest_pe = latest.get('pe')
+    latest_pe_ttm = latest.get('pe_ttm')
+    latest_pb = latest.get('pb')
+    def percentile(value, arr):
+        valid = [x for x in arr if x is not None and x > 0]
+        if not valid or value is None or value <= 0:
+            return None
+        below = sum(1 for x in valid if x < value)
+        return round(below / len(valid) * 100, 1)
+    def safe_min(arr):
+        valid = [x for x in arr if x is not None and x > 0]
+        return round(min(valid), 2) if valid else None
+    def safe_max(arr):
+        valid = [x for x in arr if x is not None and x > 0]
+        return round(max(valid), 2) if valid else None
+    def safe_avg(arr):
+        valid = [x for x in arr if x is not None and x > 0]
+        return round(sum(valid) / len(valid), 2) if valid else None
+    return {
+        'symbol': symbol,
+        'trade_date': dates[0] if dates else '',
+        'data_points': len(items),
+        'period': f"{dates[-1]}~{dates[0]}" if len(dates) >= 2 else '',
+        'pe': {
+            'current': round(latest_pe, 2) if latest_pe and latest_pe > 0 else None,
+            'percentile': percentile(latest_pe, pe_list),
+            'min': safe_min(pe_list), 'max': safe_max(pe_list), 'avg': safe_avg(pe_list)
+        },
+        'pe_ttm': {
+            'current': round(latest_pe_ttm, 2) if latest_pe_ttm and latest_pe_ttm > 0 else None,
+            'percentile': percentile(latest_pe_ttm, pe_ttm_list),
+            'min': safe_min(pe_ttm_list), 'max': safe_max(pe_ttm_list), 'avg': safe_avg(pe_ttm_list)
+        },
+        'pb': {
+            'current': round(latest_pb, 2) if latest_pb and latest_pb > 0 else None,
+            'percentile': percentile(latest_pb, pb_list),
+            'min': safe_min(pb_list), 'max': safe_max(pb_list), 'avg': safe_avg(pb_list)
+        }
+    }
 
 
 # ========== AKShare 容灾数据层 (DataHub v3.1) ==========
@@ -1321,7 +1388,7 @@ def read_account():
     """读取账户资金信息"""
     _path = ACCOUNT_PATH
     if not os.path.exists(_path):
-        _path = r"G:\VCPSystem\VCP\VCPToolBox\Plugin\GuanLan\account.json"
+        _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account.json")
     if not os.path.exists(_path):
         return {"total_capital": 0, "available_cash": 0, "updated": ""}
     try:
@@ -1334,7 +1401,7 @@ def read_account():
 def save_account(data):
     _path = ACCOUNT_PATH
     if not os.path.exists(os.path.dirname(_path)):
-        _path = r"G:\VCPSystem\VCP\VCPToolBox\Plugin\GuanLan\account.json"
+        _path = os.path.join(os.path.dirname(os.path.abspath(__file__)), "account.json")
     with open(_path, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1397,7 +1464,7 @@ def position_add(symbol, name, cost, shares, stop_loss, target, reason=""):
     
     # === 扣减可用资金 (真实费率 v3.2.1) ===
     # 佣金：股票万2.854，ETF万2.5，最低5元
-    comm_rate = 0.00025 if symbol.startswith(('5', '159')) else 0.0002854
+    comm_rate = float(os.environ.get("BROKER_COMMISSION_ETF", "0.00025")) if symbol.startswith(("5", "159")) else float(os.environ.get("BROKER_COMMISSION_STOCK", "0.00025"))
     comm_fee = max(float(cost) * int(shares) * comm_rate, 5)
     # 过户费：沪市双边万0.1
     transfer_fee = float(cost) * int(shares) * 0.00001 if symbol.startswith(('6', '5', '9', '11', '13')) else 0
@@ -1456,7 +1523,7 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
     
     # === 真实A股费率计算引擎 v3.2.1 ===
     # 1. 佣金：股票万2.854，ETF万2.5，最低5元
-    comm_rate = 0.00025 if symbol.startswith(('5', '159')) else 0.0002854
+    comm_rate = float(os.environ.get("BROKER_COMMISSION_ETF", "0.00025")) if symbol.startswith(("5", "159")) else float(os.environ.get("BROKER_COMMISSION_STOCK", "0.00025"))
     raw_amount = sell_price * close_shares
     comm_fee = max(raw_amount * comm_rate, 5)
     # 2. 印花税：千1(0.1%)，仅股票卖出收取，ETF免收
@@ -1498,8 +1565,13 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
     
     # 检查是否为部分减仓
     if close_shares < pos["shares"]:
-        # 部分减仓：保留剩余持仓，更新数量
-        pos["shares"] = pos["shares"] - close_shares
+        # 部分减仓：保留剩余持仓，更新数量+重算摊薄成本
+        original_total_cost = cost * pos["shares"]
+        remaining_shares = pos["shares"] - close_shares
+        if remaining_shares > 0:
+            diluted_cost = round((original_total_cost - return_total) / remaining_shares, 4)
+            pos["cost"] = diluted_cost
+        pos["shares"] = remaining_shares
         save_positions(positions)
         
         # 返还可用资金（使用真实费率计算的净到手金额）
@@ -2680,6 +2752,107 @@ def backtest(symbol, start_date, end_date, strategy="ma_cross", initial_capital=
     }
 
 
+
+# ========== 选股框架 v4.0 常量与辅助函数 ==========
+
+import hashlib as _hashlib
+
+# Tushare stock_basic.industry -> 风格组映射（110个细分行业全覆盖）
+INDUSTRY_STYLE_MAP = {
+    # A 周期资源
+    '铜': 'A', '铝': 'A', '铅锌': 'A', '黄金': 'A', '小金属': 'A', '矿物制品': 'A',
+    '煤炭开采': 'A', '焦炭加工': 'A',
+    '石油开采': 'A', '石油加工': 'A', '石油贸易': 'A',
+    '普钢': 'A', '特种钢': 'A', '钢加工': 'A',
+    '化工原料': 'A', '化纤': 'A', '农药化肥': 'A', '染料涂料': 'A', '塑料': 'A', '橡胶': 'A',
+    '水泥': 'A', '玻璃': 'A', '其他建材': 'A', '陶瓷': 'A',
+    '建筑工程': 'A', '装修装饰': 'A',
+    '专用机械': 'A', '工程机械': 'A', '机床制造': 'A', '机械基件': 'A', '化工机械': 'A', '轻工机械': 'A',
+    # B 金融杠杆
+    '银行': 'B', '保险': 'B', '证券': 'B', '多元金融': 'B',
+    # C 成长科技
+    '半导体': 'C', '元器件': 'C', 'IT设备': 'C',
+    '软件服务': 'C',
+    '通信设备': 'C', '电信运营': 'C',
+    '影视音像': 'C', '互联网': 'C', '广告包装': 'C', '出版业': 'C',
+    '电气设备': 'C', '电器仪表': 'C',
+    '航空': 'C', '船舶': 'C',
+    # D 消费稳定
+    '白酒': 'D', '啤酒': 'D', '红黄酒': 'D', '软饮料': 'D', '食品': 'D', '乳制品': 'D', '饲料': 'D',
+    '中成药': 'D', '化学制药': 'D', '生物制药': 'D', '医疗保健': 'D', '医药商业': 'D',
+    '农业综合': 'D', '种植业': 'D', '渔业': 'D', '林业': 'D',
+    '纺织': 'D', '服饰': 'D',
+    '家用电器': 'D', '电器连锁': 'D',
+    '汽车整车': 'D', '汽车配件': 'D', '汽车服务': 'D', '摩托车': 'D',
+    '旅游景点': 'D', '旅游服务': 'D', '酒店餐饮': 'D', '公共交通': 'D',
+    '百货': 'D', '超市连锁': 'D', '商贸代理': 'D', '商品城': 'D', '其他商业': 'D', '批发业': 'D',
+    '日用化工': 'D', '家居用品': 'D',
+    '造纸': 'D', '文教休闲': 'D',
+    '纺织机械': 'D', '农用机械': 'D',
+    # E 基建公用
+    '水力发电': 'E', '火力发电': 'E', '新型电力': 'E', '供气供热': 'E', '水务': 'E',
+    '机场': 'E', '港口': 'E', '公路': 'E', '路桥': 'E', '水运': 'E', '空运': 'E', '铁路': 'E',
+    '仓储物流': 'E',
+    '环境保护': 'E',
+    '综合类': 'E',
+    '全国地产': 'E', '区域地产': 'E', '房产服务': 'E', '园区开发': 'E',
+}
+
+FRAMEWORK_V4_PARAMS = {
+    'version': '4.0',
+    'industry_map': INDUSTRY_STYLE_MAP,
+    'Q2': {'A': 8, 'B': 10, 'C': 8, 'D': 12, 'E': 8},
+    'Q3': {
+        'A': {'pe_pct': 40, 'pb_pct': 50, 'logic': 'OR'},
+        'B': {'bank_pb_max': 1.0, 'broker_pb_pct': 50, 'brokerage': ['证券']},
+        'C': {'peg_max': 1.0, 'growth_cap': 50},
+        'D': {'pe_pct': 50, 'pb_pct': 65, 'logic': 'AND'},
+        'E': {'div_min': 3.0, 'pb_pct': 40, 'logic': 'OR'},
+    },
+    'Q5': {'A': {'debt_max': 60}, 'C': {'rd_ratio_min': 5}, 'D': {'gpm_min': 20}, 'E': {'ocf_min': 0.05}},
+    'min_samples': 250,
+    'special': {'医药生物': 'use_PEG'},
+}
+
+STYLE_NAMES = {'A': '周期资源', 'B': '金融杠杆', 'C': '成长科技', 'D': '消费稳定', 'E': '基建公用'}
+
+
+def _generate_fv_hash():
+    params_str = json.dumps(FRAMEWORK_V4_PARAMS, sort_keys=True, ensure_ascii=False)
+    return f"[fv:{_hashlib.md5(params_str.encode()).hexdigest()[:8]}]"
+
+
+def _get_industry(symbol):
+    ts_code = _ts_code(symbol)
+    data = _tushare_api('stock_basic', {'ts_code': ts_code}, 'ts_code,name,industry')
+    if not data or not data.get('items'):
+        log(f"industry fetch failed for {symbol}")
+        return None
+    fields = data.get('fields', [])
+    row = dict(zip(fields, data['items'][0]))
+    return row.get('industry', '')
+
+
+def _get_fina_indicator_v4(symbol):
+    ts_code = _ts_code(symbol)
+    data = _tushare_api('fina_indicator', {'ts_code': ts_code},
+        'ts_code,ann_date,end_date,roe,or_yoy,netprofit_yoy,debt_to_assets,grossprofit_margin,ocf_to_debt,ocf_to_or')
+    if not data or not data.get('items'):
+        log(f"fina_indicator fetch failed for {symbol}")
+        return None
+    fields = data.get('fields', [])
+    rows = [dict(zip(fields, item)) for item in data['items']]
+    # Prefer annual report (end_date contains '1231') - Tushare returns desc by date
+    annual = [r for r in rows if str(r.get('end_date', '')).endswith('1231')]
+    if annual:
+        return annual[0]
+    # Fallback to latest semi-annual, then latest available
+    semi = [r for r in rows if str(r.get('end_date', '')).endswith('0630')]
+    if semi:
+        return semi[0]
+    return rows[0]
+
+
 # ========== 选股框架 v3.0 ==========
 
 def market_check():
@@ -2740,7 +2913,7 @@ def market_check():
         return {"error": str(e)[:60]}
 
 
-def stock_screen(symbol):
+def stock_screen_v3(symbol):
     """选股框架三问 + 禁买清单"""
     result = {
         "symbol": symbol,
@@ -2913,6 +3086,336 @@ def stock_screen(symbol):
 
 
 
+# ========== 选股框架 v4.0 主函数 ==========
+
+def _get_rd_ratio(symbol):
+    """从income接口获取研发费用率(年报口径)"""
+    ts_code = _ts_code(symbol)
+    data = _tushare_api('income', {'ts_code': ts_code},
+        'ts_code,end_date,revenue,rd_exp')
+    if not data or not data.get('items'):
+        return None
+    fields = data.get('fields', [])
+    rows = [dict(zip(fields, item)) for item in data['items']]
+    annual = [r for r in rows if str(r.get('end_date', '')).endswith('1231')]
+    row = annual[0] if annual else (rows[0] if rows else None)
+    if not row:
+        return None
+    rd = float(row.get('rd_exp') or 0)
+    rev = float(row.get('revenue') or 0)
+    if rev > 0:
+        return round(rd / rev * 100, 1)
+    return None
+
+def stock_screen(symbol):
+    """v4.0 - 五风格组分路由 + 三问 + 禁买清单"""
+    fv_hash = _generate_fv_hash()
+    result = {
+        "symbol": symbol,
+        "framework_version": "4.0",
+        "framework_hash": fv_hash,
+        "pass": True,
+        "rejected_by": [],
+        "details": {},
+        "warnings": []
+    }
+
+    # --- Step 0: daily_basic ---
+    basic = _get_daily_basic(symbol)
+    if not basic:
+        result["pass"] = False
+        result["verdict"] = "REJECT"
+        result["reason"] = "无法获取基本面数据"
+        return result
+
+    pe_ttm = float(basic.get("pe_ttm", 0) or 0)
+    pb = float(basic.get("pb", 0) or 0)
+    total_mv = float(basic.get("total_mv", 0) or 0)
+    close = float(basic.get("close", 0) or 0)
+    dv_ttm = float(basic.get("dv_ratio", 0) or 0)
+
+    result["details"]["PE_TTM"] = round(pe_ttm, 1)
+    result["details"]["PB"] = round(pb, 2)
+    result["details"]["total_mv_yi"] = round(total_mv / 10000, 1) if total_mv else None
+    result["details"]["dv_ttm"] = round(dv_ttm, 2)
+
+    # --- Step 1: industry -> style group ---
+    industry = _get_industry(symbol)
+    result["details"]["industry"] = industry or "未知"
+    style_group = INDUSTRY_STYLE_MAP.get(industry, 'D')
+    if industry not in INDUSTRY_STYLE_MAP:
+        result["warnings"].append(f"[industry_fallback] '{industry}' not in map, default D")
+    result["details"]["style_group"] = style_group
+    result["details"]["style_name"] = STYLE_NAMES.get(style_group, '?')
+
+    # --- Step 2: fina_indicator ---
+    fina = _get_fina_indicator_v4(symbol)
+    roe = float(fina.get('roe', 0) or 0) if fina else 0
+    or_yoy = float(fina.get('or_yoy', 0) or 0) if fina else 0
+    debt_to_assets = float(fina.get('debt_to_assets', 0) or 0) if fina else 0
+    gpm = float(fina.get('grossprofit_margin', 0) or 0) if fina else 0
+    ocf_to_debt = float(fina.get('ocf_to_debt', 0) or 0) if fina else 0
+
+    result["details"]["ROE"] = round(roe, 2)
+    result["details"]["or_yoy"] = round(or_yoy, 2)
+    result["details"]["debt_to_assets"] = round(debt_to_assets, 2)
+    result["details"]["gpm"] = round(gpm, 2)
+
+    # report period alignment check (patch 6)
+    if fina and basic.get('trade_date') and fina.get('ann_date'):
+        try:
+            d1 = datetime.strptime(str(basic['trade_date']), '%Y%m%d')
+            d2 = datetime.strptime(str(fina['ann_date']), '%Y%m%d')
+            diff = abs((d1 - d2).days)
+            if diff > 90:
+                result["warnings"].append(f"[stale_data] basic {basic['trade_date']} vs fina {fina['ann_date']} diff={diff}d")
+        except Exception:
+            pass
+
+    # --- Step 3: technicals (keep original logic) ---
+    kline = get_kline_with_indicators(symbol, days=70)
+    if "latest" not in kline or "error" in kline:
+        result["pass"] = False
+        result["verdict"] = "REJECT"
+        result["reason"] = "技术面数据不足"
+        return result
+
+    latest = kline["latest"]
+    rsi6 = latest.get("RSI", 50)
+    ma5 = latest.get("MA5", 0)
+    ma20 = latest.get("MA20", 0)
+    ma60 = latest.get("MA60", 0)
+    macd_bar = latest.get("MACD柱", 0)
+    boll_up = latest.get("BOLL上", 0)
+
+    result["details"]["RSI6"] = rsi6
+    result["details"]["MA_align"] = kline["summary"].get("均线排列", "")
+
+    # --- Forbidden list (keep original) ---
+    if total_mv and total_mv / 10000 < 100:
+        result["pass"] = False
+        result["rejected_by"].append(f"市值{round(total_mv/10000,1)}亿<100亿")
+    if rsi6 > 70:
+        result["pass"] = False
+        result["rejected_by"].append(f"RSI6={rsi6}>70")
+    if close and boll_up and close > boll_up:
+        result["pass"] = False
+        result["rejected_by"].append(f"价格{close}>布林上轨{boll_up}")
+    if ma5 and ma20 and ma60 and ma5 < ma20 < ma60:
+        result["pass"] = False
+        result["rejected_by"].append("均线空头排列")
+
+    # === Q2: profitability (per-style ROE threshold) ===
+    q2_pass = True
+    q2_reasons = []
+    roe_min_map = {'A': 8, 'B': 10, 'C': 8, 'D': 12, 'E': 8}
+    roe_min = roe_min_map.get(style_group, 12)
+
+    if roe <= 0:
+        q2_pass = False
+        q2_reasons.append(f"ROE={roe}%<=0")
+    elif roe < roe_min:
+        q2_pass = False
+        q2_reasons.append(f"ROE={roe}%<{roe_min}%({style_group}组)")
+
+    if style_group == 'C' and or_yoy < 15:
+        q2_pass = False
+        q2_reasons.append(f"营收增速{or_yoy}%<15%(成长组)")
+
+    result["Q2_能赚钱"] = {"pass": q2_pass, "reasons": q2_reasons if q2_reasons else [f"ROE={roe}%达标"]}
+
+    # === Q3: valuation (5 routes) ===
+    q3_pass = False
+    q3_reasons = []
+    q3_details = {}
+    PHARMA_INDUSTRIES = {'中成药', '化学制药', '生物制药', '医疗保健', '医药商业'}
+    BROKERAGE_INDUSTRIES = {'证券'}
+
+    use_peg = (industry in PHARMA_INDUSTRIES) or (style_group == 'C')
+    if use_peg:
+        # C组/医药 -> PEG route
+        g_capped = min(or_yoy, 50) if or_yoy > 0 else 0
+        if g_capped <= 0:
+            q3_reasons.append(f"营收增速{or_yoy}%<=0, PEG无法计算")
+        elif pe_ttm <= 0:
+            q3_reasons.append(f"PE={pe_ttm}<=0, PEG无法计算")
+        else:
+            peg = round(pe_ttm / g_capped, 2)
+            q3_details["PEG"] = peg
+            q3_details["G_capped"] = f"{g_capped}%(raw={or_yoy}%,cap=50%)"
+            if peg <= 1.0:
+                q3_pass = True
+                q3_reasons.append(f"PEG={peg}<=1.0")
+            else:
+                q3_reasons.append(f"PEG={peg}>1.0")
+
+    elif style_group == 'A':
+        pct = _get_valuation_percentile(symbol, 5)
+        if not pct:
+            q3_reasons.append("无法获取分位数")
+        elif pct['data_points'] < 250:
+            q3_reasons.append(f"样本{pct['data_points']}<250")
+            result["warnings"].append(f"[INSUFFICIENT_DATA] {pct['data_points']}pts")
+        else:
+            pe_pct = pct.get('pe_ttm', {}).get('percentile')
+            pb_pct = pct.get('pb', {}).get('percentile')
+            q3_details["PE_pct"] = pe_pct
+            q3_details["PB_pct"] = pb_pct
+            pe_ok = pe_pct is not None and pe_pct <= 40
+            pb_ok = pb_pct is not None and pb_pct <= 50
+            if pe_ok or pb_ok:
+                q3_pass = True
+                by = []
+                if pe_ok: by.append(f"PE分位{pe_pct}%<=40%")
+                if pb_ok: by.append(f"PB分位{pb_pct}%<=50%")
+                q3_reasons.append(f"周期OR: {', '.join(by)}")
+            else:
+                q3_reasons.append(f"PE分位{pe_pct}%>40% 且 PB分位{pb_pct}%>50%")
+
+    elif style_group == 'B':
+        q3_details["PB"] = pb
+        if industry in BROKERAGE_INDUSTRIES:
+            # 券商走PB分位数(跟周期股同逻辑, PB合理区间1.0-2.0)
+            pct_b = _get_valuation_percentile(symbol, 5)
+            if not pct_b:
+                q3_reasons.append("无法获取分位数")
+            elif pct_b['data_points'] < 250:
+                q3_reasons.append(f"样本量{pct_b['data_points']}<250不足")
+            else:
+                pb_pct_b = pct_b.get('pb', {}).get('percentile')
+                q3_details["PB分位"] = f"{pb_pct_b}%"
+                if pb_pct_b is not None and pb_pct_b <= 50:
+                    q3_pass = True
+                    q3_reasons.append(f"券商PB分位{pb_pct_b}%<=50%")
+                else:
+                    q3_reasons.append(f"券商PB分位{pb_pct_b}%>50%")
+        else:
+            # 银行/保险走PB绝对值破净
+            if 0 < pb <= 1.0:
+                q3_pass = True
+                q3_reasons.append(f"PB={pb}<=1.0破净")
+            else:
+                q3_reasons.append(f"PB={pb}>1.0未破净")
+
+    elif style_group == 'D':
+        pct = _get_valuation_percentile(symbol, 5)
+        if not pct:
+            q3_reasons.append("无法获取分位数")
+        elif pct['data_points'] < 250:
+            q3_reasons.append(f"样本{pct['data_points']}<250")
+            result["warnings"].append(f"[INSUFFICIENT_DATA] {pct['data_points']}pts")
+        else:
+            pe_pct = pct.get('pe_ttm', {}).get('percentile')
+            pb_pct = pct.get('pb', {}).get('percentile')
+            q3_details["PE_pct"] = pe_pct
+            q3_details["PB_pct"] = pb_pct
+            pe_ok = pe_pct is not None and pe_pct <= 50
+            pb_ok = pb_pct is not None and pb_pct <= 65
+            if pe_ok and pb_ok:
+                q3_pass = True
+                q3_reasons.append(f"PE分位{pe_pct}%<=50% 且 PB分位{pb_pct}%<=65%")
+            else:
+                fails = []
+                if not pe_ok and pe_pct is not None: fails.append(f"PE分位{pe_pct}%>50%")
+                if not pb_ok and pb_pct is not None: fails.append(f"PB分位{pb_pct}%>65%")
+                q3_reasons.append(f"消费AND未通过: {', '.join(fails)}")
+
+    elif style_group == 'E':
+        q3_details["div_yield"] = dv_ttm
+        div_ok = dv_ttm >= 3.0
+        pct = _get_valuation_percentile(symbol, 5)
+        pb_pct = pct.get('pb', {}).get('percentile') if pct else None
+        if pb_pct is not None:
+            q3_details["PB_pct"] = pb_pct
+        pb_ok = pb_pct is not None and pb_pct <= 40
+        if div_ok or pb_ok:
+            q3_pass = True
+            by = []
+            if div_ok: by.append(f"股息率{dv_ttm}%>=3%")
+            if pb_ok: by.append(f"PB分位{pb_pct}%<=40%")
+            q3_reasons.append(f"稳定OR: {', '.join(by)}")
+        else:
+            q3_reasons.append(f"股息率{dv_ttm}%<3% 且 PB分位{pb_pct}>40%")
+
+    result["Q3_价格合理"] = {"pass": q3_pass, "reasons": q3_reasons, "details": q3_details}
+
+    # === Q5: safety net (per-style, partial Phase 2) ===
+    q5_pass = True
+    q5_reasons = []
+    if style_group == 'A':
+        if debt_to_assets > 60:
+            q5_pass = False
+            q5_reasons.append(f"资产负债率{debt_to_assets}%>60%")
+        else:
+            q5_reasons.append(f"资产负债率{debt_to_assets}%<=60%")
+    elif style_group == 'B':
+        q5_reasons.append("[Phase2] 拨备覆盖率待接入")
+    elif style_group == 'C':
+        rd_ratio = _get_rd_ratio(symbol)
+        if rd_ratio is None:
+            q5_reasons.append("[数据缺失] 研发费率无法获取")
+        elif rd_ratio < 5:
+            q5_pass = False
+            q5_reasons.append(f"研发费率{rd_ratio}%偏低(<5%)")
+        else:
+            q5_reasons.append(f"研发费率{rd_ratio}%达标(>=5%)")
+    elif style_group == 'D':
+        if 0 < gpm < 20:
+            q5_pass = False
+            q5_reasons.append(f"毛利率{gpm}%偏低(固定阈值20%)[Phase2改行业中位数]")
+        else:
+            q5_reasons.append(f"毛利率{gpm}%达标(固定阈值20%)[Phase2改行业中位数]")
+    elif style_group == 'E':
+        ocf_to_or = float(fina.get('ocf_to_or', 0) or 0) if fina else 0
+        ocf_pct = round(ocf_to_or * 100, 1)
+        if ocf_to_or > 0 and ocf_to_or < 0.05:
+            q5_pass = False
+            q5_reasons.append(f"经营现金流/营收{ocf_pct}%偏低(<5%)")
+        elif ocf_to_or == 0:
+            q5_reasons.append("[Phase2] 经营现金流/营收数据缺失")
+        else:
+            q5_reasons.append(f"经营现金流/营收{ocf_pct}%达标")
+
+    result["Q5_安全垫"] = {"pass": q5_pass, "reasons": q5_reasons}
+
+    # === Q1: trend (simplified original) ===
+    q1_pass = True
+    q1_reasons = []
+    if ma5 and ma20 and not (ma5 > ma20):
+        q1_pass = False
+        q1_reasons.append("MA5<MA20趋势偏弱")
+    if macd_bar < 0:
+        q1_pass = False
+        q1_reasons.append("MACD柱为负")
+    result["Q1_趋势向上"] = {"pass": q1_pass, "reasons": q1_reasons if q1_reasons else ["趋势偏多"]}
+
+    # --- Final verdict ---
+    result["three_questions"] = {
+        "Q1": result["Q1_趋势向上"],
+        "Q2": result["Q2_能赚钱"],
+        "Q3": result["Q3_价格合理"],
+        "Q5": result["Q5_安全垫"]
+    }
+
+    if not result["pass"]:
+        result["verdict"] = "REJECT"
+        result["reason"] = "；".join(result["rejected_by"])
+    elif not all(result["three_questions"][q]["pass"] for q in result["three_questions"]):
+        result["verdict"] = "REJECT"
+        all_r = []
+        for qn, qr in result["three_questions"].items():
+            if not qr["pass"]:
+                all_r.extend(qr["reasons"])
+        result["reason"] = "；".join(all_r)
+        result["pass"] = False
+    else:
+        result["verdict"] = "PASS"
+        result["reason"] = f"通过v4.0五风格组筛选 {fv_hash}"
+
+    return result
+
+
+
 def main():
     try:
         raw = sys.stdin.read().strip()
@@ -3005,30 +3508,30 @@ def main():
             out = {"status": "success", "result": watchlist_show()}
 
         elif action == "position_add":
-            p_name = params.get("name", "")
-            p_cost = params.get("cost", 0)
-            p_shares = params.get("shares", 0)
-            p_stop = params.get("stop_loss", 0)
-            p_target = params.get("target", 0)
-            p_reason = params.get("reason", "")
+            p_name = params.get("name") or cmd.get("name", "")
+            p_cost = params.get("cost") or cmd.get("cost", 0)
+            p_shares = params.get("shares") or cmd.get("shares", 0)
+            p_stop = params.get("stop_loss") or cmd.get("stop_loss", 0)
+            p_target = params.get("target") or cmd.get("target", 0)
+            p_reason = params.get("reason") or cmd.get("reason", "")
             if not symbol or not p_cost or not p_shares:
                 out = {"status": "error", "message": "缺少必要参数: symbol/cost/shares"}
             else:
                 out = {"status": "success", "result": position_add(symbol, p_name, p_cost, p_shares, p_stop, p_target, p_reason)}
 
         elif action == "position_close":
-            p_price = params.get("sell_price", 0)
-            p_shares = params.get("shares")
-            p_reason = params.get("reason", "")
-            p_commission = params.get("commission", 5)
+            p_price = params.get("sell_price") or cmd.get("sell_price", 0)
+            p_shares = params.get("shares") or cmd.get("shares")
+            p_reason = params.get("reason") or cmd.get("reason", "")
+            p_commission = params.get("commission") or cmd.get("commission", 5)
             if not symbol or not p_price:
                 out = {"status": "error", "message": "缺少必要参数: symbol/sell_price"}
             else:
                 out = {"status": "success", "result": position_close(symbol, p_price, p_shares, p_reason, p_commission)}
 
         elif action == "position_update":
-            p_stop = params.get("stop_loss")
-            p_target = params.get("target")
+            p_stop = params.get("stop_loss") or cmd.get("stop_loss")
+            p_target = params.get("target") or cmd.get("target")
             if not symbol:
                 out = {"status": "error", "message": "缺少symbol参数"}
             else:
@@ -3118,6 +3621,14 @@ def main():
             p_strategy = params.get("strategy", "ma_cross")
             p_capital = params.get("initial_capital", 100000)
             out = {"status": "success", "result": backtest(symbol, p_start, p_end, p_strategy, p_capital)}
+
+        elif action == "valuation_percentile":
+            p_years = int(params.get("years", 5))
+            result = _get_valuation_percentile(symbol, p_years)
+            if result:
+                out = {"status": "success", "result": result}
+            else:
+                out = {"status": "error", "message": f"无法获取{symbol}的历史估值数据"}
 
         else:
             out = {"status": "error", "message": f"未知操作: {action}"}

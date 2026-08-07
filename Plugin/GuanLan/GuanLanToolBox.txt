@@ -1,8 +1,8 @@
-# VCP 投研工具箱能力收纳
-这里收纳了的A股数据引擎和深度投研系统的调用说明。
+# VCP 观澜专属投研工具箱能力收纳
+这里收纳了观澜专属的A股数据引擎和深度投研系统的调用说明。
 
-## 1. A股数据引擎 (GuanLan v3.1)
-Agent 通过 GuanLan 插件调用 A股数据引擎（v3.1），支持的查询类型：
+## 1. A股数据引擎 (GuanLan v3.3.0)
+观澜通过 GuanLan 插件调用 A股数据引擎（v3.3.0），支持的查询类型：
 
 ### 快速查询
 - `realtime_quote`：个股实时行情
@@ -22,14 +22,14 @@ Agent 通过 GuanLan 插件调用 A股数据引擎（v3.1），支持的查询�
 
 ### 综合分析
 - `full_analysis`：一次性拉取行情+技术面+基本面+资金面+daily_basic(PE/PB/换手率/量比)
-  - Agent 整合所有数据后给出明确建议
+  - 观澜整合所有数据后给出明确建议
 
 ### 自选股管理
 - `watchlist_add`：添加自选股（symbol + name）
 - `watchlist_remove`：移除自选股
 - `watchlist_show`：查看当前自选股列表
 
-### 持仓管理（v2.6+）
+### 持仓管理（v3.3.0+）
 - `position_add`：买入建仓（symbol + cost + shares + stop_loss + target + reason）
   - 自动扣减可用资金（成本×数量+佣金5元）
   - 自动写入交易记录
@@ -39,41 +39,48 @@ Agent 通过 GuanLan 插件调用 A股数据引擎（v3.1），支持的查询�
   - 自动写入交易记录
 - `position_show`：查看当前活跃持仓
 
-### 交易记录（v2.6+）
+### 交易记录（v3.3.0+）
 - `trade_history`：查看完整交易历史（可按symbol筛选）
 - `trade_stats`：胜率统计（胜率/总盈亏/平均持有天数/最佳最差交易）
 
-### 账户资金（v2.6+）
+### 账户资金（v3.3.0+）
 - `account_set`：设置总资本和可用资金
 - `account_show`：查看账户资金（总资本/可用资金）
 
-### 组合概览（v2.6+）
+### 组合概览（v3.3.0+）
 - `portfolio_summary`：一次性拉取持仓+实时价格+盈亏+距止损/目标距离+账户资金+总资产+总盈亏
-  - **主人问"我的持仓"或"账户情况"时，直接用这个命令**
+  - **翔问"我的持仓"或"账户情况"时，直接用这个命令**
 
-### 盯盘扫描（v2.0）
+### 盯盘扫描（v3.3.0+）
 - `scan_anomalies`：7类异动检测 + 持仓监控（止损/目标触发提醒）
   - 自动读取watchlist + positions，返回severity分级结果（normal/medium/high/critical）
   - 检测类型：涨跌停逼近、放量突破/跌破MA20/MA60、主力资金异动、独立走势、高换手率、量价背离
 - `daily_report`：盘后日报，自选股当日表现+次日关注要点
 
-### 选股框架（v3.0）
+### 选股框架（v4.0.0+）
 - `market_check`：大盘环境判断（沪深300趋势：多头/空头/缠绕 → 对应操作建议）
-- `stock_screen`：个股三问筛选 + 禁买清单（参数：`symbol`，单只个股）
+- `stock_screen`：五风格组分路由选股 + 三问 + 禁买清单（参数：`symbol`，单只个股）
   - **禁买清单（任一触发即REJECT）**：市值<100亿 / RSI>70 / 价格>布林上轨 / 均线空头排列(MA5<MA20<MA60)
-  - **Q1 趋势向上**（需同时满足）：MA5>MA20 且 MACD柱>0
-  - **Q2 公司能赚钱**（需同时满足）：预估ROE>=3% 且 PE(TTM)<=30 且 PB/ROE<=0.15
-  - **Q3 价格合理**（需同时满足）：PE(TTM)<=25 且 RSI<=65 且 MACD柱>=0
-  - ⚠ Q3的RSI阈值(65)比禁买清单(70)更严格，RSI在65-70之间不会被禁买但无法通过Q3
-  - 返回 PASS（三问全通过且不触发禁买） / REJECT + 具体原因
+  - **行业映射**：110个Tushare细分行业 → 5个风格组（A周期/B金融/C成长/D消费/E稳定），未命中默认D组
+  - **Q1 趋势向上**：MA5>MA20 且 MACD柱>0
+  - **Q2 能赚钱（按风格分化）**：周期ROE≥8% / 金融≥10% / 成长≥8%且营收增速≥15% / 消费≥12% / 稳定≥8%
+  - **Q3 价格合理（5条独立路由）**：
+    - A周期：PE分位≤40% OR PB分位≤50%（5年窗口，最少250样本）
+    - B金融：银行PB≤1.0破净 / 券商PB分位≤50%
+    - C成长：PEG≤1.0（G=营收增速, Cap=50%）
+    - D消费：PE分位≤50% AND PB分位≤65%（医药走PEG不走PE分位）
+    - E稳定：股息率≥3% OR PB分位≤40%
+  - **Q5 安全垫（按风格）**：周期资产负债率≤60% / 成长研发费率≥5% / 消费毛利率≥行业中位数 / 稳定现金流/营收≥5%
+  - **版本戳**：[fv:hash8] 写入 position_add 的 reason 字段，胜率按框架版本分组统计
+  - 返回 PASS（三问+禁买全通过） / REJECT + 具体原因（含风格组路由信息和 [stale_data] 等警告）
 
-### 回测引擎（v3.1）
+### 回测引擎（v3.3.0+）
 - `backtest`：策略历史回测（symbol + params: start_date/end_date/strategy/initial_capital）
   - 4种策略：ma_cross(MA5/MA20金叉死叉) / macd(MACD柱翻转) / rsi(超买超卖) / boll(布林通道)
   - 输出：年化收益率/最大回撤/夏普比率/胜率/交易明细/净值曲线采样
   - 回测允许零股交易，纯粹反映信号质量
 
-### 事件型异动扫描（v3.1）
+### 事件型异动扫描（v3.3.0+）
 - `scan_events`：4类事件异动聚合扫描（symbols + params: days）
   - 龙虎榜异动 / 大宗交易折溢价 / 限售解禁预警 / 业绩预告触发
 - `lhb_detail`：个股龙虎榜明细（symbol + params: days）
@@ -81,18 +88,18 @@ Agent 通过 GuanLan 插件调用 A股数据引擎（v3.1），支持的查询�
 - `share_unlock`：全市场限售解禁排名
 - `earnings_forecast`：业绩预告（params: date，自动推断报告期）
 
-### 舆情分析（v3.1）
+### 舆情分析（v3.3.0+）
 - `sentiment_scan`：个股/批量舆情聚合（symbol 或 symbols）
   - 5维度：机构参与度/综合评价/关注度/买入欲望(参与意愿)/热门概念
 - `sentiment_rank`：全市场人气排名TOP100
 
-### 组合压力测试（v3.1）
+### 组合压力测试（v3.3.0+）
 - `stress_test`：历史极端行情模拟（params: scenario 或 custom_drop）
   - 5预设场景：crash_2015(股灾-35%) / crash_2024(1月雪崩-12%) / trade_war(贸易战-25%) / covid_2020(疫情-16%) / 924_surge(+25%)
   - 用Beta模型估算个股压力（个股跌幅=大盘跌幅×行业Beta）
   - 自定义：custom_drop参数指定任意涨跌幅
 
-### 板块轮动追踪（v3.1）
+### 板块轮动追踪（v3.3.0+）
 - `sector_rotation`：31个申万一级行业动量分析
   - 计算5日/10日/20日累计涨跌幅
   - 6类信号：accelerating(加速流入) / decelerating(加速流出) / uptrend(持续上行) / downtrend(持续下行) / rebounding(超跌反弹) / pulling_back(高位回调)
@@ -151,3 +158,4 @@ docker exec tradingagents-backend python -c "import json; f=open('/app/data/anal
 - Yahoo Finance 有请求频率限制，高峰期可能被限流（429 Too Many Requests）
 - FedWatch 和加密期限结构耗时较长，可能超时
 - 推荐先调用 GetGlobalMacroDashboard 建立总览，再用 FetchMarketData 定向深挖
+
