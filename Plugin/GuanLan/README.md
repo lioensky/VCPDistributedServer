@@ -2,7 +2,7 @@
 
 > **为 AI-Agent 打造的 A股量化感知器官。** 让你的 Agent 在对话流中一句话完成查行情、扫异动、跑回测、看持仓、测压力——不需要打开 VNpy 终端，不需要写 Backtrader 脚本，不需要登录同花顺。
 
-**版本** v3.3.0 | **作者** 观澜 & 冬竹子（翔） | **协议** CC BY-NC-SA 4.0
+**版本** v4.0.0 | **作者** 观澜 & 冬竹子（翔） | **协议** CC BY-NC-SA 4.0
 
 ---
 
@@ -44,7 +44,7 @@ AKShare 容灾层（自动接管，5个降级函数覆盖全部关键维度）
 
 这不是简单的 try/except——每个容灾函数**重新解析数据格式**，确保降级后字段语义一致。主流框架通常只支持单一数据源，GuanLan 在 A股数据源频繁变更的环境下实现了真正的生产级高可用。
 
-### 2. 真实A股费率引擎（v3.3.0）
+### 2. 真实A股费率引擎（v3.2+）
 
 内置与真实券商对齐的费率计算模型，盈亏复盘精准到分：
 - **佣金**：支持配置（股票/ETF分别设置，默认万2.5，最低5元）
@@ -60,20 +60,22 @@ AKShare 容灾层（自动接管，5个降级函数覆盖全部关键维度）
 
 | 分类 | 命令 | 核心能力 |
 |------|------|---------|
-| **基础行情** | `realtime_quote` / `batch_quotes` / `stock_info` | 秒级行情、批量查询、PE/PB/市值 |
-| **技术分析** | `kline_indicators` / `full_analysis` | MA/MACD/RSI/布林带/KDJ/OBV/ATR/WR/CCI |
-| **资金分析** | `capital_flow` | 主力/超大单/大单/中单/小单 5层资金流向 |
-| **ETF 适配** | `capital_flow`(ETF分支) | 自动识别 5/159 开头，含换手率/折价率/净份额 |
-| **持仓管理** | `position_add` / `position_close` / `position_update` / `portfolio_summary` | 建仓/平仓/部分减仓/更新止损目标、真实费率算盈亏、ATR动态止损 |
+| **基础行情** | `realtime_quote` / `batch_quotes` / `stock_info` / `sector_ranking` | 秒级行情、批量查询、PE/PB/市值、行业板块涨跌排名 |
+| **技术分析** | `kline_indicators` / `full_analysis` / `valuation_percentile` | MA/MACD/RSI/布林带/KDJ/OBV/ATR/WR/CCI、四维度综合分析、PE/PB历史分位数 |
+| **资金分析** | `capital_flow` | 主力/超大单/大单/中单/小单 5层资金流向（ETF不覆盖） |
+| **持仓管理** | `position_add` / `position_close` / `position_update` / `position_show` / `portfolio_summary` | 建仓/平仓/减仓/更新止损目标、真实费率算盈亏、全仓位概览 |
 | **交易记录** | `trade_history` / `trade_stats` / `trade_stats_monthly` | 完整流水、胜率统计、按月盈亏比 |
-| **异动扫描** | `scan_anomalies` / `scan_events` | 7类技术异动 + 4类事件异动（龙虎榜/大宗/解禁/业绩预告） |
-| **舆情分析** | `sentiment_scan` / `sentiment_rank` | 5维度情绪聚合：机构参与度/评价/关注/买入欲望/概念热度 |
-| **压力测试** | `stress_test` | 5历史极端场景（2015股灾/2024雪崩等）+ 自定义跌幅 |
+| **账户资金** | `account_set` / `account_show` | 总资本/可用资金管理 |
+| **自选股** | `watchlist_add` / `watchlist_remove` / `watchlist_show` | 自选股增删查 |
+| **异动扫描** | `scan_anomalies` / `daily_report` | 7类技术异动 + 持仓监控 + 盘后日报 |
+| **事件扫描** | `scan_events` / `lhb_detail` / `block_trade` / `share_unlock` / `earnings_forecast` | 龙虎榜/大宗交易/限售解禁/业绩预告 4类事件异动 |
+| **舆情分析** | `sentiment_scan` / `sentiment_rank` | 5维度情绪聚合 + 全市场人气排名TOP100 |
+| **压力测试** | `stress_test` | 5历史极端场景 + 自定义跌幅 |
 | **板块轮动** | `sector_rotation` | 31行业 5/10/20日动量，6类信号分类 |
 | **市场温度计** | `market_temperature` | 涨跌停+涨跌比+换手率+成交额 → 0-100评分 |
 | **ATR止损** | `update_trailing_stops` | 基于ATR(14)×2.5的跟踪止损，只上移不下移 |
 | **策略回测** | `backtest` | MA交叉/MACD/RSI/布林 4策略，输出年化/回撤/夏普/胜率 |
-| **选股框架** | `stock_screen` / `market_check` | 大盘环境判断 + 三问筛选 + 禁买清单 |
+| **选股框架** | `stock_screen` / `market_check` | 大盘环境判断 + **五风格组分路由选股(v4.0)** + 三问 + 禁买清单 + 版本戳 |
 
 ### 5. A股特性深度适配
 
@@ -170,9 +172,11 @@ pip install pandas-ta
 > Agent 自动调用 `sentiment_scan` → 5维度情绪聚合（机构参与度/综合评价/关注度/买入欲望/热门概念）→ 输出情绪温度和题材热度分布
 > 进阶用法：买入欲望>80警惕散户接盘；关注度低+评价高=左侧逆向机会；题材热度变化揭示市场交易逻辑切换
 
-**场景10：新股/次新股筛选**
+**场景10：智能选股（v4.0 五风格组分路由）**
 > 用户："帮我推荐一只股票"
-> Agent 自动调用 `stock_screen` → 触发禁买清单（市值<100亿 / RSI>70 / 均线空头）直接拦截返回 REJECT，或通过 Q1(趋势)/Q2(盈利能力)/Q3(估值) 三关测试返回 PASS 及详细数据依据。
+> Agent 自动调用 `stock_screen` → 触发禁买清单（市值<100亿 / RSI>70 / 均线空头 / 破布林上轨）直接拦截返回 REJECT，或按行业风格分组（A周期/B金融/C成长/D消费/E稳定）走独立估值路由，通过 Q1(趋势)/Q2(盈利能力)/Q3(价格合理)/Q5(安全垫) 四关测试返回 PASS 及详细数据依据。
+> v4.0 核心改进：不再用 PB/ROE 一刀切，而是按行业特性分别校验——周期股看 PE/PB 历史分位数，金融股看破净+拨备，成长股看 PEG，消费股看 PE 分位数+PB分位数，稳定股看股息率。避免"用尺子量温度"。
+
 
 ---
 
@@ -326,6 +330,22 @@ def _get_daily_basic(symbol):
 | **ETF 异动扫描部分失效** | AKShare 全市场行情对 ETF 代码覆盖不全 | 盘中异动扫描对 ETF 可能返回空 |
 | **事件接口非交易时段超时** | AKShare 事件类接口底层爬东财/同花顺网页，周末响应缓慢 | 已加 try/except 降级，交易时段稳定 |
 | **无实盘交易接口** | 设计上不接 CTP/券商 API | 安全设计，防止 Agent 自主下单 |
+| **PEG的G用历史增速近似**（v4.0） | stock_screen 中 PEG 的 G 使用营收同比(or_yoy)近似，非卖方一致预期 | 后视镜不是望远镜，但彼得·林奇实操中也大量使用历史增速 |
+| **fina_indicator报告期对齐**（v4.0） | stock_screen 优先取年报数据，若年报未出则降级取季报，标记 `[stale_data]` | ROE 可能偏低（季报累计非年化），不影响 PASS/REJECT 判断 |
+| **拨备覆盖率待接入**（v4.0） | 银行 Q5 安全垫的拨备覆盖率≥150%尚未接入 | 当前银行 Q5 跳过，Phase 2 待找数据源 |
+
+---
+
+## 📋 版本历史
+
+| 版本 | 日期 | 主要变更 |
+|------|------|----------|
+| v2.0 | 2026-05 | 异动扫描(7类)+自选股管理+盘后日报 |
+| v2.5 | 2026-06 | Tushare迁移+新浪源切换+交易记录系统 |
+| v3.1 | 2026-07 | DataHub双源容灾 + 回测引擎 + 事件扫描 + 舆情分析 + 压力测试 + 板块轮动 |
+| v3.2 | 2026-07 | 真实A股费率引擎 + filelock并发安全 + position_update |
+| v3.3 | 2026-07 | position_close减仓摊薄成本 + 38命令全量 |
+| **v4.0** | **2026-08** | **选股框架重写：五风格组分路由(周期/金融/成长/消费/稳定) + 110细分行业映射 + 历史分位数估值(5年窗口) + PEG(Cap=50%) + 版本戳[fv:hash8] + Nova 6条防御性补丁** |
 
 ---
 
