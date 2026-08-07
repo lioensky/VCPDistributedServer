@@ -19,9 +19,12 @@ class PluginManager {
         if (!pid) return;
         try {
             if (process.platform === 'win32') {
-                spawn('taskkill', ['/T', '/F', '/PID', pid.toString()], {
+                const killer = spawn('taskkill', ['/T', '/F', '/PID', pid.toString()], {
                     windowsHide: true,
                     stdio: 'ignore'
+                });
+                killer.on('error', (err) => {
+                    console.warn(`[DistPluginManager] Failed to start taskkill for plugin "${pluginName}" (PID: ${pid}): ${err.message}`);
                 });
                 if (this.debugMode) console.log(`[DistPluginManager] Sent taskkill /T /F /PID ${pid} for plugin "${pluginName}"`);
             } else {
@@ -230,7 +233,14 @@ class PluginManager {
 
         return new Promise((resolve, reject) => {
             const [command, ...args] = plugin.entryPoint.command.split(' ');
-            const pluginProcess = spawn(command, args, { cwd: plugin.basePath, shell: true, env: envForProcess, windowsHide: true });
+            const pluginProcess = spawn(command, args, {
+                cwd: plugin.basePath,
+                shell: true,
+                env: envForProcess,
+                windowsHide: true,
+                // POSIX: create a separate process group so a negative PID can terminate the entire plugin tree.
+                detached: process.platform !== 'win32'
+            });
 
             let outputBuffer = '';
             let errorOutput = '';
@@ -363,7 +373,14 @@ class PluginManager {
             }
 
             const [command, ...args] = plugin.entryPoint.command.split(' ');
-            const pluginProcess = spawn(command, args, { cwd: plugin.basePath, shell: true, env: envForProcess, windowsHide: true });
+            const pluginProcess = spawn(command, args, {
+                cwd: plugin.basePath,
+                shell: true,
+                env: envForProcess,
+                windowsHide: true,
+                // POSIX: create a separate process group so a negative PID can terminate the entire plugin tree.
+                detached: process.platform !== 'win32'
+            });
             let output = '';
             let errorOutput = '';
             let processExited = false;
