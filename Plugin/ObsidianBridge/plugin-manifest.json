@@ -1,0 +1,161 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "ObsidianBridge",
+  "displayName": "Obsidian 笔记桥接器",
+  "version": "1.4.0",
+  "description": "通过 Obsidian CLI (v1.12+) 桥接 VCP 与 Obsidian 笔记库。支持笔记读写、全文搜索(含上下文)、每日笔记、文件/文件夹浏览、任务管理、反向链接/出站链接查询、标签统计、属性管理、大纲查看、字数统计、模板列表等 22 项基础能力。v1.4.0 新增节点写作模式(node_* 6 命令)：以不可见的 HTML 注释锚点为 Markdown 提供节点级寻址与局部替换能力（Obsidian CLI 本身只有 create/append/prepend，无替换），Agent 侧全程无需接触 HTML。节点模式采用内存节点编译结合 Obsidian CLI 物理提交机制，在保证桌面端 IPC 缓存一致性与历史撤销树完整的前提下，向 Agent 提供稳定确定的局部编辑能力。",
+  "author": "Nova & 小夜 | 扩展: infinite-vector",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node obsidian_bridge.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 30000
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "read",
+        "description": "读取指定 Obsidian 笔记的完整内容。参数: file(笔记名,wikilink风格) 或 path(精确相对路径), vault(可选,指定vault)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」read「末」,\nfile:「始」品牌洞察思考「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "search",
+        "description": "在 Obsidian 笔记库中全文搜索。参数: query(必需,搜索关键词), limit(可选,返回数量), folder(可选,限定文件夹)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」search「末」,\nquery:「始」Cauchy积分「末」,\nlimit:「始」10「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "search_context",
+        "description": "带上下文的全文搜索,返回匹配行及其周围内容,更适合AI阅读。参数: query(必需), limit(可选), folder(可选), case_sensitive(可选,布尔)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」search_context「末」,\nquery:「始」测度论「末」,\nlimit:「始」5「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "create",
+        "description": "创建新的 Obsidian 笔记。参数: name(必需,笔记名), content(可选,正文,支持字面量\\n换行), folder(可选,存放文件夹), template(可选,模板名), overwrite(可选,布尔)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」create「末」,\nname:「始」测试笔记「末」,\ncontent:「始」# 标题\\n\\n正文内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "append",
+        "description": "向已有笔记末尾追加内容。参数: file 或 path(必需), content(必需)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」append「末」,\nfile:「始」测试笔记「末」,\ncontent:「始」追加的内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "prepend",
+        "description": "向已有笔记开头插入内容。参数: file 或 path(必需), content(必需), inline(可选,不加换行)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」prepend「末」,\nfile:「始」测试笔记「末」,\ncontent:「始」插入到开头的内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "daily_read",
+        "description": "读取今日每日笔记(Daily Note)内容。参数: vault(可选)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」daily_read「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "daily_append",
+        "description": "向今日每日笔记末尾追加内容。参数: content(必需)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」daily_append「末」,\ncontent:「始」追加内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "daily_prepend",
+        "description": "向今日每日笔记开头插入内容。参数: content(必需), inline(可选,不加换行)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」daily_prepend「末」,\ncontent:「始」插入到开头的内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "daily_path",
+        "description": "获取今日每日笔记的文件路径。无必需参数。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」daily_path「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "files",
+        "description": "列出vault中的文件。参数: folder(可选,限定文件夹), ext(可选,限定扩展名), total(可选,布尔,仅返回数量)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」files「末」,\nfolder:「始」数学maths/分析「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "folders",
+        "description": "列出vault中的文件夹。参数: folder(可选,限定父文件夹), total(可选,布尔,仅返回数量)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」folders「末」,\nfolder:「始」数学maths「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "backlinks",
+        "description": "查询指定笔记的所有反向链接(谁链接了它)。参数: file 或 path(必需)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」backlinks「末」,\nfile:「始」中心思想「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "links",
+        "description": "查询指定笔记的出站链接(它链接了谁)。参数: file 或 path(必需), total(可选,布尔)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」links「末」,\nfile:「始」中心思想「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "tags",
+        "description": "统计笔记库中所有标签及使用次数,按使用频率排序。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」tags「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "tasks",
+        "description": "获取待办任务列表。参数: file 或 path(可选,指定文件), scope(可选,'daily'或'all',默认daily；指定file/path时自动查该文件), done(可选,查已完成), status(可选,按任务状态字符筛选)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」tasks「末」,\nscope:「始」daily「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "property_set",
+        "description": "设置笔记的 frontmatter/Properties 属性。参数: file 或 path(必需), name(必需,属性名), value(必需,属性值), type(可选,text/list/number/checkbox/date/datetime)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」property_set「末」,\nfile:「始」测试笔记「末」,\nname:「始」status「末」,\nvalue:「始」done「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "property_read",
+        "description": "读取笔记的某个 frontmatter/Properties 属性值。参数: name(必需,属性名), file 或 path(可选,省略则读活跃文件)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」property_read「末」,\nname:「始」tags「末」,\nfile:「始」测试笔记「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "properties",
+        "description": "列出vault或指定文件的所有属性。参数: file 或 path(可选), format(可选,yaml/json/tsv), total(可选), counts(可选), sort(可选,'count')。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」properties「末」,\nformat:「始」json「末」,\ncounts:「始」true「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "wordcount",
+        "description": "统计笔记的字数和字符数。参数: file 或 path(可选,省略则统计活跃文件), words(可选,仅返回字数), characters(可选,仅返回字符数)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」wordcount「末」,\nfile:「始」中心思想「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "outline",
+        "description": "显示笔记的标题大纲结构。参数: file 或 path(可选), format(可选,tree/md/json), total(可选,仅返回标题数)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」outline「末」,\nfile:「始」中心思想「末」,\nformat:「始」tree「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "templates",
+        "description": "列出vault中所有可用模板。参数: total(可选,布尔,仅返回数量)。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」templates「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_create",
+        "description": "【节点写作模式】从零起草新笔记，自动将双点标记转译为可寻址节点。\n你（Agent）只需写普通 Markdown，用中文双间隔号 ·· 成对包住想要节点化的区段，程序会把它们转成隐形锚点（在 Obsidian 渲染视图不可见）。你永远不需要也不应该书写 HTML。\n\n参数：\n- name 或 path（二者必填其一）：name 为笔记名，path 为精确相对路径\n- content（可选）：正文，用 ··…·· 成对标记节点\n- tags（可选）：逗号分隔的位置列表，按顺序对应第 1..N 个节点\n- folder（可选）、overwrite（可选，布尔）、vault（可选）\n\n【必读：输入与输出的对应关系】\n1) 成对且给了 tag：\n   输入 content=··你好··  tags=hello\n   → 落盘 <!--AUTO_hello_BEGIN-->你好<!--AUTO_hello_END-->\n2) 成对但未给 tag：自动命名 Default{i}（i 为全局序号，直接等于审计表行号），正文一律保留：\n   输入 content=··你好··\n   → 落盘 <!--AUTO_Default1_BEGIN-->你好<!--AUTO_Default1_END-->\n3) tags 少于节点数：后续位自动补 Default{i}，不报错。中间留空（tags=x,,z）也可，空位补 Default2\n4) tags 多于节点数：【本命令唯一的报错条件】意味着你数错了自己写的节点对\n5) 【白板落笔原则】没配对的点不报错，原样保留为字面量：\n   输入 ··你好···  → 锚点对 + 尾部保留一个 ·\n   单个 · 永不参与转译，因此人名号（列夫·托尔斯泰）安全\n6) 代码块（``` 围栏与行内反引号）内的双点不转译\n\n【输出】成功时返回审计表：节点总数 + 每节点的 序号/tag/首5字符/尾5字符/长度。若你以为写了节点却看到「节点总数: 0」，请检查是否用了双点且成对——审计表就是你的反馈通道。\n【tag 命名】仅允许 字母/数字/下划线/连字符/中文；禁空格；tag 必须全文唯一（重名会使寻址失效，硬报错）。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_create「末」,\npath:「始」项目/设计笔记.md「末」,\ncontent:「始」# 设计笔记\\n\\n··核心论点写在这里··\\n\\n普通段落不标记\\n\\n··待办清单··「末」,\ntags:「始」core,todo「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_add",
+        "description": "【节点写作模式】在已有笔记上添加节点：定位一段原文，把它包成可寻址节点。\n这是本体系唯一需要你提供原文的命令。渡过这一次之后，后续的替换/清空/拆除全部只需给 tag，不再需要原文。\n\n参数：file 或 path（必需）、target（必需，要包成节点的原文）、tag（必需）、vault（可选）。\n\n【定位语义与 Agent 写法告诫】\n- 按顺序包裹原文中**首个匹配到的 target**；若文中有多处相同词句，程序直接处理第一处。\n- **告诫 Agent**：如果你要精准定位文中的特定段落，请务必完整复制包含前后上下文的完整片段，不要写过于短小重复的词（如单个词组），否则默认只会包裹最靠前的那一处！\n- target 与已有节点嵌套或交叉 → 拒绝\n- tag 已存在 → 拒绝\n\n【锚点位置忠实】锚点紧贴被标记文本首尾插入，自身不产生任何换行。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_add「末」,\nfile:「始」设计笔记「末」,\ntarget:「始」这一段是需要被标记的原文，请逐字复制「末」,\ntag:「始」结论「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_text_replace",
+        "description": "【节点写作模式】按 tag 寻址，换掉节点内的正文，锚点保留。无需提供原文。\n这是 Obsidian CLI 本身缺失的「局部替换」能力，由节点体系提供。\n\n参数：file 或 path（必需）、tag（必需）、content（必需，新正文）、vault（可选）。\ntag 不存在时会报错并列出当前可用的全部 tag，不必猜。\ncontent 按字面量写入，需要换行请直接传真换行；LaTeX 命令原样传入即可。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_text_replace「末」,\nfile:「始」设计笔记「末」,\ntag:「始」core「末」,\ncontent:「始」改写后的核心论点内容「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_text_delete",
+        "description": "【节点写作模式】按 tag 清空节点正文，锚点保留（变成空壳）。\n这是【两步删除法】的第一步。清空后你会拿到审计表，该节点的首尾字符会显示为 ∅、长度 0——这给了你一个在真正拆掉锚点前发现删错对象的机会。\n\n参数：file 或 path（必需）、tag（必需）、vault（可选）。\n若正文已为空会报错（提示该用 node_delete）。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_text_delete「末」,\nfile:「始」设计笔记「末」,\ntag:「始」todo「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_delete",
+        "description": "【节点写作模式】拆除节点锚点（只拆壳，不删文件）。\n【硬前置条件】节点正文必须已为空，否则报错。请先 node_text_delete 清空，再 node_delete 拆壳。此两步设计是为了避免一次调用就把锚点和正文一起送走，中间那一步的审计表就是你的可回头窗口。\n\n参数：file 或 path（必需）、tag（必需）、vault（可选）。\n拆壳后前后文本直接相接，因锚点零换行而天然无缝。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_delete「末」,\nfile:「始」设计笔记「末」,\ntag:「始」todo「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "node_read",
+        "description": "【节点写作模式】读取笔记。mode 为【必填】参数，三选一：\n\n- mode=full ：整篇正文。锚点会被转译为可读形式 [node-tag:xxx]…[/node-tag:xxx]，你永远不会看到 HTML 注释。无节点时原样返回。\n- mode=tags ：仅节点清单（审计表）。不占多少上下文就能看清全文的节点地图，包含 序号/tag/首5字符/尾5字符/长度。\n- mode=node ：仅返回指定 tag 的节点正文，需同时提供 tag 参数。\n\n【推荐工作流】处理长文时先 mode=tags 看地图，再 mode=node 精读需要的那一段，而不要把整篇长文吞进上下文。\n\n参数：file 或 path（必需）、mode（必需）、tag（mode=node 时必需）、vault（可选）。\n本命令纯读，不会修改任何文件。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ObsidianBridge「末」,\ncommand:「始」node_read「末」,\nfile:「始」设计笔记「末」,\nmode:「始」tags「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  }
+}

@@ -4,7 +4,7 @@ const { execSync, execFileSync } = require('child_process');
 
 // ============================================
 // ObsidianBridge - VCP <-> Obsidian CLI 桥接器
-// Version: 1.2.0
+// Version: 1.4.0
 // Author: Nova & 小夜 | 扩展: infinite-vector
 // ============================================
 
@@ -412,6 +412,20 @@ const COMMAND_HANDLERS = {
 };
 
 // --- 响应构建 ---
+
+// --- 节点写作模式扩展 (node_* 6 命令) ---
+// 三根主轴 escapeValue / buildCommand / execCLI 均未修改。
+// 加载失败时仅告警，原有 22 命令不受影响。
+try {
+    require('./node_handlers.js').register(COMMAND_HANDLERS, {
+        buildCommand: buildCommand,
+        execCLI: execCLI,
+        success: success,
+        error: error
+    });
+} catch (e) {
+    console.warn('[ObsidianBridge] 节点写作模式加载失败: ' + e.message);
+}
 
 function success(text, details = null) {
     const result = {
