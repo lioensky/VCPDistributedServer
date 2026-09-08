@@ -1,0 +1,15 @@
+{
+  "name": "GuanLan",
+  "displayName": "观澜-A股数据引擎",
+  "version": "4.0.0",
+  "description": "A股智能数据引擎，38+专业命令。支持双数据源容灾(Tushare+AKShare)、真实费率引擎(佣金/印花税/过户费)、filelock跨进程并发安全。核心模块：实时行情与技术指标(MA/MACD/RSI/布林带/KDJ等)、基本面数据(PE/PB/ROE/市值)、资金流向分析、板块排名与轮动追踪、持仓管理与交易记录(含胜率统计)、组合压力测试(5场景)、选股框架v4.0(五风格组分路由+三问+禁买清单+版本戳)、策略回测引擎(4种策略)、事件型异动扫描(龙虎榜/大宗交易/解禁/业绩预告)、舆情分析(5维度)、盘中异动扫描与持仓监控、盘后日报。作者：观澜 & 冬竹子（翔）",
+  "author": "观澜 & 冬竹子（翔）",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "command": "python main.py"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 120000
+  }
+}

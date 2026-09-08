@@ -1,0 +1,7 @@
+{
+  "name": "blender-bridge",
+  "version": "1.0.0",
+  "description": "VCP <-> Blender MCP three-tier bridge",
+  "main": "BlenderBridge.js",
+  "private": true
+}

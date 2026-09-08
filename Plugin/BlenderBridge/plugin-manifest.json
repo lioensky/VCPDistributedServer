@@ -1,0 +1,44 @@
+{
+  "name": "BlenderBridge",
+  "displayName": "Blender 3D 桥接器",
+  "version": "1.1.0",
+  "manifestVersion": "1.0.0",
+  "author": "竹林夕弦 (Lucifa-sakula)",
+  "description": "VCP <-> Blender 官方 MCP Server <-> Blender Add-on 的三端桥接，外加可选的 GMR 生成式动作绑定扩展。桥接本体走双跳架构：VCP 经 Streamable HTTP 连 blender-mcp (默认 6090)，后者再经 TCP 连 Blender 内的插件 (默认 9876)，提供 59 个工具（场景查询、建模、材质、几何节点、蜡笔、渲染、截图、API 文档），采用渐进式发现避免上下文膨胀。GMR 扩展模块位于 gmr/ 子目录，提供动作生成模型的仓库登记、训练任务、推理 sidecar 管理共 15 个命令；该模块与桥接本体解耦，整目录删除后本体照常工作。",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "command": "node BlenderBridge.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 70000
+  },
+  "configSchema": {
+    "BLENDER_MCP_URL": "string",
+    "REQUEST_TIMEOUT_MS": "integer",
+    "MCP_PROTOCOL_VERSION": "string",
+    "DebugMode": "boolean",
+    "GMR_ROOT": "string",
+    "GMR_MODELS_DIR": "string",
+    "GMR_JOBS_DIR": "string",
+    "GMR_DATASETS_DIR": "string",
+    "GMR_PYTHON": "string",
+    "GMR_SIDECAR_HOST": "string",
+    "GMR_SIDECAR_PORT": "integer",
+    "GMR_SIDECAR_URL": "string",
+    "GMR_ALLOW_DOWNLOAD": "boolean",
+    "GMR_REQUIRE_SAFE_FORMAT": "boolean",
+    "GMR_LOG_TAIL_BYTES": "integer",
+    "GMR_INFER_TIMEOUT_MS": "integer",
+    "GMR_HEALTH_TIMEOUT_MS": "integer"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "BlenderBridge",
+        "description": "通过 command 字段选择子命令。本插件分两部分：【桥接本体】6 个命令，操作正在运行的 Blender；【GMR 扩展】15 个命令，管理生成式动作模型的仓库/训练/推理。\n\n═══ 桥接本体 ═══\n\n为节约上下文，请遵循渐进式发现：先 list_domains 看领域，再 discover_tools 看某领域工具，需要时 get_tool_schema 查参数，最后 call_tool 执行。切勿凭记忆猜参数名。\n\n【前置条件】1) Blender 正在运行且 MCP 插件已启用、偏好面板显示 Server is running；2) Blender 系统偏好已开启 Allow Online Access（不开则插件拒启）；3) blender-mcp 已以 HTTP 模式启动。详见插件目录 README.md。\n\n- status: 检查连接、工具总数、领域分布。无需其它参数。\n- list_domains: 列出所有工具领域及各自工具数量。\n- discover_tools: 列出指定领域的工具名与简介。参数 domain(字符串, 必需)。\n- get_tool_schema: 查看单个工具的完整参数 Schema。参数 tool(字符串, 必需)。\n- call_tool: 调用任意 Blender MCP 工具。参数 tool(字符串, 必需)、arguments(JSON 字符串或对象, 可选)。\n- create_model: 程序化建模逃生舱，通过 bpy 在 Blender 内执行 Python 建模代码。参数 code(字符串, 必需)。详见「模型自制说明.md」。\n\n【领域一览】scene(1) object(10) mesh(1) material(1) geonodes(4) greasepencil(10) animation(3) asset(2) blendfile(10) render(4) screenshot(3) navigation(4) docs(3) exec(2) other(1)\n此清单是撰写时的快照，共 59 个工具。领域由工具名前缀规则实时推导，上游新增工具会自动落位（不匹配任何前缀的落 other）。完整分布以 list_domains 的运行时返回为准。\n\n═══ GMR 扩展（Generative Motion Rig）═══\n\n复刻 Disney Research「A Generative Motion Rig for Artist-Driven Motion Authoring」(SIGGRAPH Talks '26) 的地基。完整说明见 gmr/README.md，运行时用 gmr_help 取得各命令参数详情。\n\n【三频率回路】慢回路(秒级): VCP -> 本插件 -> blender-mcp:6090 -> Add-on，用于 Agent 语义编排。快回路(~100ms): Blender GMR Add-on -> sidecar:6091，拖拽推理，不经过 VCP。管理回路: VCP -> 本插件 -> gmr ex -> sidecar:6091。要点：快回路必须绕开 blender-mcp——上游单并发(BLENDER_BUSY) + 双跳延迟，交互推理塞进去必然请求堆积锁死。\n\n[总览]\n- gmr_status: GMR 模块概况——模型数、任务数、sidecar 可达性、Python 脚本就绪状态。无参数。\n- gmr_help: 全部 GMR 命令的完整参数说明、架构要点、约束契约、注意事项。无参数。\n\n[模型仓库]\n- import_model: 登记本地 checkpoint。参数 source(必需, 绝对路径)、name、kind(betweener|poser|other, 默认 betweener)、copy(true 则复制进仓库)、meta(JSON, 骨架契约)。安全约束：拒绝 URL——PyTorch checkpoint 走 pickle 反序列化，加载不受信任文件等同任意代码执行，请先手动下载并核验来源。\n- list_models: 列出已注册模型。参数 kind(可选, 过滤)。\n- update_model: 补齐骨架契约元数据。参数 model_id(必需) 及 joints / fps / window / up_axis / feature_dim / notes / name / kind。\n- remove_model: 注销登记。参数 model_id(必需)、delete_file(可选)。原地登记(copy=false)的模型拒绝删除文件，防误删用户原始资产。\n\n[训练任务]\n- train: 启动训练。参数 dataset(必需)、name、kind、script、epochs、batch_size、lr、window、device、seed、resume_from、extra_args。detached 启动后立即返回，不阻塞 70s 插件超时；训练成功后 checkpoint 会自动登记进模型注册表。\n- list_jobs: 列出任务。参数 status(可选, running|succeeded|failed|cancelled)。\n- job_status: 查询任务状态与日志尾部。参数 job_id(必需)、tail_bytes(可选)。\n- cancel_job: 发送 SIGTERM 终止。参数 job_id(必需)。已保存的 checkpoint 不会被删除。\n\n[推理服务]\n- sidecar_start: 启动推理进程。参数 model_id(可选, 预载)、device、script。\n- sidecar_stop: 终止推理进程。无参数。\n- sidecar_status: 健康检查、已载模型、日志尾部。无参数。\n- sidecar_load_model: 热装载模型。参数 model_id(必需)、device(可选)。\n- infer: 单次生成试跑，用于验证链路与调参，非交互回路。参数 constraints(必需)、window、seed、steps、model_id、base_motion。\n\n【约束契约】约束的单一真相源是 .blend 文件里的自定义属性，不在内存也不在 sidecar。Empty 上挂 gmr_type(sparse|fullbody)、gmr_joint、gmr_frame、gmr_seed；Scene 上挂 gmr_window(时间评估边界)、gmr_base_action(编辑模式的 inpainting 底座)。好处：随 .blend 存盘、seed 落盘即可复现变体、Agent 能读到完整创作意图而非仅结果动作。\n\n【接入模型：填配置表，不改代码】训练与推理的五个关键入口由 gmr/model_config.json 描述，不需要改任何 Python 源码。对应关系：model.factory(构造模型)、model.loader(载入权重)、dataset.loader(数据加载)、training.trainStep(单步训练)、checkpoint.saver(保存权重)、sampler.sample(生成采样)。三步接入：复制 gmr/model_config.example.json 为 model_config.json、填 enabled=true 与 runtime.sysPath 与各函数名、运行 python3 gmr/python/model_config.py --resolve 校验。完整契约与排错清单见 gmr/模型接入说明.md。改完配置可 POST /reload_config 热重载，不必重启 sidecar。\n\n【当前完成度】命令分发、模型注册表、训练状态机、sidecar 生命周期、配置驱动的模型接入均已可用；未配置 model_config.json 时训练走 dry-run、推理走三次贝塞尔插值兜底，未装 PyTorch 也能验证整条链路。尚未编写的是 Blender 侧的 GMR add-on（快回路客户端，即 NMC 视口绘制与 handle 拖拽监听）。\n\n【注意事项】1) bpy 非线程安全：推理结果必须经 bpy.app.timers.register() marshal 回主线程才能写 bpy.data，违反即随机 segfault 且极难复现。2) GMR_PYTHON 应指向装有 PyTorch 的独立 venv，勿用系统 Python。3) up_axis 极重要：多数动作模型是 Y-up 而 Blender 是 Z-up，弄错会导致角色躺平。4) 若 gmr/ 目录不存在，以上 15 个命令自动隐藏，桥接本体不受影响。\n\n═══ 调用示例 ═══\n\n【查看场景】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」call_tool「末exp」,\ntool:「始exp」get_scene_state「末exp」,\narguments:「始exp」{}「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【添加图元（注意参数名是 primitive_type）】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」call_tool「末exp」,\ntool:「始exp」mesh_primitive_add「末exp」,\narguments:「始exp」{\"primitive_type\":\"CUBE\",\"name\":\"MyCube\",\"location\":[0,0,0]}「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【程序化建模逃生舱】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」create_model「末exp」,\ncode:「始exp」import bpy\nbpy.ops.mesh.primitive_uv_sphere_add(radius=1.5, location=(0,0,0))\nobj = bpy.context.active_object\nobj.name = \"MySphere\"\nresult = {\"created\": obj.name, \"verts\": len(obj.data.vertices)}「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【GMR 概况】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」gmr_status「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【登记模型并补齐骨架契约】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」import_model「末exp」,\nsource:「始exp」/home/user/models/condmdi.safetensors「末exp」,\nname:「始exp」condmdi-base「末exp」,\nkind:「始exp」betweener「末exp」,\nmeta:「始exp」{\"joints\":22,\"fps\":30,\"window\":64,\"up_axis\":\"Y\",\"feature_dim\":263}「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【启动训练（立即返回，用 job_status 轮询）】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」train「末exp」,\ndataset:「始exp」/home/user/datasets/humanml3d「末exp」,\nname:「始exp」betweener-v1「末exp」,\nepochs:「始exp」50「末exp」,\ndevice:「始exp」cuda「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【单次生成试跑】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」BlenderBridge「末exp」,\ncommand:「始exp」infer「末exp」,\nconstraints:「始exp」[{\"type\":\"sparse\",\"joint\":\"foot_L\",\"frame\":0,\"loc\":[0,0,0]},{\"type\":\"sparse\",\"joint\":\"foot_L\",\"frame\":30,\"loc\":[0.6,0,0.05]}]「末exp」,\nwindow:「始exp」[0,30]「末exp」,\nseed:「始exp」8471223「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>",
+        "example": "调用 status 检查三端连接状态与可用工具总数；调用 gmr_status 检查 GMR 扩展模块与推理 sidecar 状态。"
+      }
+    ]
+  }
+}

@@ -1,0 +1,64 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "blender-mcp"
+version = "1.0.0"
+description = "MCP server for Blender"
+requires-python = ">=3.10"
+dependencies = [
+    "docutils",
+    "mcp[cli]>=1.2.0",
+    "pyyaml",
+]
+
+[project.scripts]
+blender-mcp = "blmcp:main"
+
+[tool.setuptools.packages.find]
+where = ["."]
+
+[tool.setuptools.package-data]
+"blmcp" = [
+    # MCP prompt definitions.
+    "data/prompts.yml",
+    # Blender Python API reference.
+    "data/api/**/*.rst",
+    # Blender user manual.
+    "data/manual/**/*.rst",
+]
+
+[tool.mypy]
+mypy_path = "stubs"
+
+[[tool.mypy.overrides]]
+module = [
+    "blmcp", "blmcp.*",
+    "blender_mcp_addon", "blender_mcp_addon.*",
+]
+strict = true
+
+[[tool.mypy.overrides]]
+module = [
+    "bpy", "bpy.*",
+    "mcp", "mcp.*",
+]
+ignore_missing_imports = true
+
+[tool.ruff]
+extend-exclude = ["blmcp/data"]
+
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.autopep8]
+max_line_length = 120
+ignore = [
+    "E721",
+    "E722",
+    "E402",
+    "W690",
+]
+aggressive = 2
+

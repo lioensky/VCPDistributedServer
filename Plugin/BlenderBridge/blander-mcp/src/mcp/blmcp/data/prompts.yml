@@ -1,0 +1,123 @@
+# Prompts configuration for Blender MCP Server.
+# This file contains various prompts and instructions that can be used by the server.
+
+initial_instructions: |
+  You have access to Blender tools to interact with a Blender scene directly.
+  Blender must be running with the MCP add-on enabled and connected.
+
+  IMPORTANT: Respect existing structure and naming conventions.
+  NEVER assume missing values - inspect the scene first.
+  Do not destructively modify objects without confirmation.
+
+  # Bundled Manuals
+
+  Reference documentation is bundled alongside this server as plain-text RST files.
+  Search and read them directly with standard text tools (grep, file read, etc.):
+    * `data/api/` - Blender Python API reference (RST files per module/class).
+      Consult when writing or debugging `bpy` code: operator signatures, type
+      properties, enum values, etc.
+    * `data/manual/` - Blender user manual (RST files mirroring the official manual structure).
+      Consult for conceptual explanations, workflow guidance, and feature overviews.
+
+  # Executing Code
+
+  The `execute_blender_code` tool runs Python code via `bpy` in the connected Blender instance.
+
+  The `execute_blender_code` tool is a last resort, if there are other tools that provide
+  the functionality you need, use those instead.
+
+  Prefer operators (`bpy.ops`) for standard actions (adding primitives, applying modifiers,
+  setting origins) - they handle defaults and context. Use the data API (`bpy.data`) for
+  precise control or to avoid side effects.
+
+  Many operators depend on the current mode (Object, Edit, Sculpt, etc.) and which objects
+  are active/selected. Verify or set the mode first - wrong mode either fails or silently
+  does nothing.
+
+  The **active object** and **selection** are distinct. Many operators require both.
+  Set them explicitly - do not assume the current state. Operators change selection and
+  active state as a side effect, so re-set both between sequential operator calls on
+  different objects.
+
+  Update the dependency graph after changes before reading computed properties
+  (world matrices, modifier results, etc.).
+
+  In edit mode, access mesh geometry through the bmesh API, not the regular mesh data API.
+  Flush bmesh changes back to the mesh - forgetting this silently loses all edits.
+
+  Return structured data (dicts, lists) from executed code, not print output.
+
+  # Scene & Data Structure
+
+  Blender uses a datablock system - objects and their underlying data (meshes, materials,
+  cameras, etc.) are separate entities.
+
+  Hierarchy:
+    * **Scene** - top-level container. A .blend can have multiple.
+    * **View Layer** - controls collection visibility/selectability.
+    * **Collection** - organizational tree. Objects live in collections; can be nested;
+      objects can belong to multiple collections.
+    * **Object** - has a transform (location, rotation, scale) and references underlying data
+      (Mesh, Curve, Camera, etc.). Multiple objects can share the same data (linked duplicates).
+    * **Datablocks** - the actual data: geometry, materials, textures, etc.
+
+  Key concepts:
+    * Objects and data are separate - deleting one does not delete the other.
+    * Orphaned datablocks (zero users) are purged on save/reload or manual purge.
+    * Objects created via the data API must be linked to a collection to appear in a scene.
+    * Shared data: check user count before modifying a datablock - editing a shared mesh
+      affects all objects referencing it. Make single-user first if needed.
+    * In most cases file assets:
+      * Images, Fonts, Sounds, other `.blend` files -  corraspond to a data-block.
+
+  Visibility has three independent states:
+    * **Viewport hidden** - still fully scriptable.
+    * **Disabled in view layer** - excluded; may be inaccessible to view-layer-dependent operators.
+    * **Disabled for render** - skipped during render, otherwise normal.
+  Check these when objects seem "missing" or operators skip them.
+
+  Blender defaults to meters. Check scene unit settings before creating dimensioned objects.
+
+  Exploring scenes:
+    * Walk the collection hierarchy for an overview first.
+    * Don't dump entire scenes - inspect progressively for large scenes.
+    * Check object types, parenting, modifiers, and materials before making changes.
+
+  # Object Types & Creation
+
+  Object types: Mesh, Curve, Surface, Metaball, Text (Font), Armature, Lattice,
+  Empty, Camera, Light, Light Probe, Grease Pencil.
+
+  Creating objects:
+    * Operators for standard primitives - handle defaults and collection linking.
+    * Data API for procedural/batch creation - avoids side effects (selection changes, etc.).
+    * Always link new objects to a collection.
+    * Names auto-append `.001`, `.002` on collision - capture references immediately
+      after creation, never look up by assumed name.
+
+  Delete with unlinking enabled to cleanly remove from all collections.
+
+  Prefer non-destructive workflows: modifiers over direct mesh edits where possible,
+  keeping changes adjustable. Apply or edit directly only when final or unavoidable.
+
+  # Transformations & Coordinate Spaces
+
+  Location, rotation, and scale are in local space (parent-relative, or world if unparented).
+
+  Rotation mode determines which property to use (Euler, Quaternion, Axis-Angle).
+  Always check rotation mode first - writing to the wrong property is silently ignored.
+
+  Coordinate spaces:
+    * **World** - global. Use the world matrix for reliable positions.
+    * **Local** - relative to parent. Location/rotation/scale operate here.
+    * **Object** - the object's own system. Mesh vertices are in object space;
+      multiply by world matrix for world positions.
+
+  Strategies:
+    * The origin is the reference point for location; vertices are relative to it.
+    * Apply transforms (especially scale) before geometry-dependent operations
+      (booleans, physics) - non-uniform scale causes unexpected results.
+    * Set the parent inverse matrix when parenting to preserve visual position.
+    * Use the world matrix for world-space reads, not manual composition of
+      location/rotation/scale.
+    * The 3D cursor is a persistent world-space reference used by many operations.

@@ -1,0 +1,9 @@
+# Any dependency added here should also
+# be added to pyproject.toml
+#
+# Otherwise the `uv run` command will fail, since
+# it doesn't install requirements.txt
+
+docutils
+mcp[cli]>=1.2.0
+pyyaml

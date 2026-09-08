@@ -1,0 +1,97 @@
+{
+  "_说明": "GMR 模型接入配置表示例。复制为 model_config.json 后按需修改。详见同目录「模型接入说明.md」。",
+  "_原理": "train.py 与 sidecar.py 不再要求改 Python 源码，而是读本文件按配置动态 import 并调用你指定的工厂函数。原先 5 处 TODO 因此变成 5 组配置项。",
+  "_未配置时的行为": "本文件不存在或 enabled 为 false 时，train.py 走 dry-run（模拟训练验证状态机），sidecar.py 走三次贝塞尔插值兜底。此时不需要 PyTorch，整条链路仍可验证。",
+
+  "enabled": false,
+  "configVersion": 1,
+  "name": "condmdi-example",
+  "kind": "betweener",
+
+  "runtime": {
+    "_说明": "模型代码的定位方式。sysPath 会被插入 sys.path 头部，使 import 能找到上游仓库。",
+    "sysPath": [
+      "/home/user/repos/CondMDI"
+    ],
+    "device": "auto",
+    "seed": 0
+  },
+
+  "skeleton": {
+    "_说明": "骨架契约。这几项决定 Blender 侧能否正确 retarget，必须与训练数据一致。",
+    "_upAxis警告": "多数动作模型是 Y-up 而 Blender 是 Z-up。填错会让角色躺平，这是最常见的接入事故。",
+    "joints": 22,
+    "fps": 30,
+    "window": 64,
+    "upAxis": "Y",
+    "featureDim": 263,
+    "jointNames": [
+      "pelvis", "left_hip", "right_hip", "spine1", "left_knee", "right_knee",
+      "spine2", "left_ankle", "right_ankle", "spine3", "left_foot", "right_foot",
+      "neck", "left_collar", "right_collar", "head", "left_shoulder", "right_shoulder",
+      "left_elbow", "right_elbow", "left_wrist", "right_wrist"
+    ]
+  },
+
+  "model": {
+    "_说明": "对应原 train.py 的 build_model() 与 sidecar.py 的 load_model_impl()。",
+    "_契约": "factory 指向的可调用对象签名为 factory(config: dict, device: str) -> model；loader 为 loader(config: dict, checkpoint_path: str, device: str) -> model。二者返回的对象会原样传给 sampler 与 trainStep。",
+    "module": "condmdi.model",
+    "factory": "build_model",
+    "loader": "load_checkpoint",
+    "initArgs": {
+      "latent_dim": 512,
+      "num_layers": 8,
+      "num_heads": 4,
+      "dropout": 0.1
+    }
+  },
+
+  "dataset": {
+    "_说明": "训练数据的加载方式。loader 签名为 loader(path: str, config: dict) -> 可迭代对象。",
+    "module": "condmdi.data",
+    "loader": "build_dataloader",
+    "format": "humanml3d",
+    "loaderArgs": {
+      "num_workers": 4,
+      "shuffle": true
+    }
+  },
+
+  "training": {
+    "_说明": "对应原 train.py 的 train_one_epoch()。trainStep 签名为 step(model, batch, optimizer, config) -> dict（返回本步指标）。",
+    "module": "condmdi.train_loop",
+    "trainStep": "train_step",
+    "optimizer": "AdamW",
+    "epochs": 50,
+    "batchSize": 32,
+    "lr": 0.0001,
+    "weightDecay": 0.01,
+    "gradClip": 1.0,
+    "saveEveryEpochs": 1,
+    "logEverySteps": 50
+  },
+
+  "checkpoint": {
+    "_说明": "对应原 train.py 的 save_checkpoint()。saver 签名为 saver(model, path: str, meta: dict) -> None。",
+    "_安全建议": "优先 safetensors。torch.save 走 pickle，分发给他人时加载等同任意代码执行——这也是 registry.js 的 SAFE_FORMATS 只列 safetensors/onnx/npz 的原因。",
+    "format": "safetensors",
+    "module": "condmdi.io",
+    "saver": "save_safetensors",
+    "filename": "model.safetensors"
+  },
+
+  "sampler": {
+    "_说明": "对应原 sidecar.py 的 infer_impl()。sample 签名为 sample(model, constraints: list, window: list, seed: int, config: dict) -> list[list[float]]，返回逐帧数据。",
+    "_延迟提醒": "交互式拖拽需 ~100-150ms。原生 DDPM 1000 步绝无可能达到，必须用 DDIM/LCM 少步采样或蒸馏模型。这是「是 rig 还是批处理」的分水岭。",
+    "module": "condmdi.sample",
+    "sample": "sample_with_constraints",
+    "type": "ddim",
+    "steps": 10,
+    "guidanceScale": 2.5,
+    "inpaintStrategy": "replace_known",
+    "sampleArgs": {
+      "clip_denoised": false
+    }
+  }
+}

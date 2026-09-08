@@ -1,0 +1,36 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "GodotEventReceiver",
+  "displayName": "Godot 事件接收器",
+  "version": "1.0.0",
+  "description": "二期反向通道：作为 WebSocket 服务端接收来自 Godot 侧 godot_vcp_bridge 插件主动推送的运行时/编辑器事件（服务器启停、工具执行、错误、日志、游戏内自定义事件），并转发到 VCP 前端广播。与 GodotBridge（请求-响应）物理隔离。",
+  "pluginType": "service",
+  "entryPoint": {
+    "script": "GodotEventReceiver.js"
+  },
+  "communication": {
+    "protocol": "direct"
+  },
+  "configSchema": {
+    "GODOT_EVENT_PORT": {
+      "type": "integer",
+      "description": "接收 Godot 事件的 WebSocket 监听端口，默认 5090。"
+    },
+    "GODOT_EVENT_TOKEN": {
+      "type": "string",
+      "description": "可选。Godot 侧连接时需在 Authorization: Bearer 或 ?token= 中携带的校验令牌。留空则不校验。"
+    },
+    "GODOT_EVENT_BROADCAST": {
+      "type": "boolean",
+      "description": "是否将收到的 Godot 事件转发到 VCP 前端 WebSocket 广播（默认 true）。"
+    },
+    "DebugMode": {
+      "type": "boolean",
+      "description": "调试模式，打印详细日志。"
+    }
+  },
+  "capabilities": {
+    "systemPromptPlaceholders": [],
+    "invocationCommands": []
+  }
+}

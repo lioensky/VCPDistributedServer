@@ -1,0 +1,12 @@
+[tool.pylint.format]
+max-line-length = 120
+
+[tool.autopep8]
+max_line_length = 120
+ignore = [
+    "E721",
+    "E722",
+    "E402",
+    "W690",
+]
+aggressive = 2

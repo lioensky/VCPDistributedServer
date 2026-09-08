@@ -1,39 +1,225 @@
 {
   "manifestVersion": "1.0.0",
   "name": "NovelAIGen",
-  "displayName": "NovelAI 图片生成器",
-  "version": "1.0.0",
-  "description": "通过 NovelAI API 使用 NovelAI Diffusion 模型生成高质量的动漫风格图片。支持多种模型和参数调节。",
-  "author": "VCP-Assistant",
+  "displayName": "NovelAI 图像生成器 (全能力网关)",
+  "version": "2.1.0",
+  "description": "NovelAI 六端点多渠道全参数网关。",
+  "author": "VCP-Assistant; infinite-vector",
   "pluginType": "synchronous",
-  "entryPoint": {
-    "type": "nodejs",
-    "command": "node NovelAIGen.js"
-  },
-  "communication": {
-    "protocol": "stdio"
-  },
+  "entryPoint": { "type": "nodejs", "command": "node NovelAIGen.js" },
+  "communication": { "protocol": "stdio", "timeout": 300000 },
   "configSchema": {
     "NOVELAI_API_KEY": {
       "type": "string",
-      "description": "您的NovelAI API密钥 (从 https://novelai.net/ 获取)",
+      "description": "单渠道 Bearer token，多渠道模式下可留空。",
       "default": "",
-      "required": true
+      "required": false
+    },
+    "NOVELAI_BASE_URL": {
+      "type": "string",
+      "description": "单渠道图像 API 基地址。",
+      "default": "https://image.novelai.net",
+      "required": false
+    },
+    "NOVELAI_ACCOUNT_URL": {
+      "type": "string",
+      "description": "账户 API 基地址。",
+      "default": "https://api.novelai.net",
+      "required": false
+    },
+    "MULTI_CHANNEL": {
+      "type": "boolean",
+      "description": "启用多渠道。",
+      "default": false,
+      "required": false
+    },
+    "NOVELAI_CHANNELS": {
+      "type": "string",
+      "description": "URL|KEY|MODELS|CAPS|PATH_PREFIX;...，能力位为 gen,i2i,infill,vibe,augment,upscale,tags；第五段为原生协议路径前缀（如 /native），留空即官方行为。",
+      "default": "",
+      "required": false
+    },
+    "NOVELAI_PATH_PREFIX": {
+      "type": "string",
+      "description": "单渠道模式的原生协议路径前缀。官方直连留空；YesNovelAI 等中转站填 /native。多渠道模式请用 NOVELAI_CHANNELS 的第五段。",
+      "default": "",
+      "required": false
+    },
+    "VIBE_UNSUPPORTED_PREFIXES": {
+      "type": "string",
+      "description": "本地拦截 Vibe Transfer 的模型前缀，逗号分隔。留空表示不拦截，由上游返回错误。若确认某系模型不支持，可填 nai-diffusion-5。",
+      "default": "",
+      "required": false
+    },
+    "MODEL_ALIASES": {
+      "type": "string",
+      "description": "alias=model;... 覆盖内置别名表。内置 v5=nai-diffusion-5-full、v5c=nai-diffusion-5-curated（来源为中转站 /v1/models 实证，官方直连未验证）。",
+      "default": "",
+      "required": false
+    },
+    "INPAINT_MODELS": {
+      "type": "string",
+      "description": "base=variant;...。",
+      "default": "",
+      "required": false
+    },
+    "INPAINT_FALLBACK_CHAIN": {
+      "type": "string",
+      "description": "base>variant;...。",
+      "default": "",
+      "required": false
+    },
+    "DEFAULT_MODEL": {
+      "type": "string",
+      "description": "默认模型。",
+      "default": "v4.5",
+      "required": false
+    },
+    "DEFAULT_STEPS": {
+      "type": "number",
+      "description": "默认步数。",
+      "default": 23,
+      "required": false
+    },
+    "DEFAULT_SCALE": {
+      "type": "number",
+      "description": "默认 scale。",
+      "default": 5,
+      "required": false
+    },
+    "DEFAULT_SAMPLER": {
+      "type": "string",
+      "description": "默认采样器。",
+      "default": "k_euler_ancestral",
+      "required": false
+    },
+    "DEFAULT_NOISE_SCHEDULE": {
+      "type": "string",
+      "description": "默认噪声调度。",
+      "default": "karras",
+      "required": false
+    },
+    "DEFAULT_UC": {
+      "type": "string",
+      "description": "默认负面提示词。留空时使用内置默认负面提示词（与本项 default 一致）。",
+      "default": "lowres, artistic error, film grain, scan artifacts, worst quality, bad quality, jpeg artifacts, very displeasing, chromatic aberration, dithering, halftone, screentone, multiple views, logo, too many watermarks, negative space, blank page",
+      "required": false
+    },
+    "RESOLUTION_PRESETS": {
+      "type": "string",
+      "description": "分辨率白名单。",
+      "default": "",
+      "required": false
+    },
+    "MAX_RETRIES": {
+      "type": "number",
+      "description": "最大重试次数。",
+      "default": 2,
+      "required": false
+    },
+    "RETRY_BASE_DELAY_MS": {
+      "type": "number",
+      "description": "退避基础延迟。",
+      "default": 2000,
+      "required": false
+    },
+    "MAX_IMAGE_SIZE_MB": {
+      "type": "number",
+      "description": "输入图片大小上限。",
+      "default": 8,
+      "required": false
+    },
+    "ENUM_PROBE": {
+      "type": "boolean",
+      "description": "启用枚举探测。",
+      "default": true,
+      "required": false
+    },
+    "NovelAIProxy": {
+      "type": "string",
+      "description": "代理地址。",
+      "default": "",
+      "required": false
     },
     "DebugMode": {
       "type": "boolean",
-      "description": "是否为此插件启用详细的调试日志输出到stderr。",
+      "description": "脱敏调试日志。",
       "default": false,
+      "required": false
+    },
+    "PROJECT_BASE_PATH": {
+      "type": "string",
+      "description": "VCP 项目根目录。",
+      "default": "",
+      "required": true
+    },
+    "SERVER_PORT": {
+      "type": "string",
+      "description": "图片服务器端口。",
+      "default": "",
+      "required": true
+    },
+    "IMAGESERVER_IMAGE_KEY": {
+      "type": "string",
+      "description": "图片服务器密钥。",
+      "default": "",
+      "required": true
+    },
+    "VarHttpUrl": {
+      "type": "string",
+      "description": "HTTP 图片服务地址。",
+      "default": "",
+      "required": true
+    },
+    "VarHttpsUrl": {
+      "type": "string",
+      "description": "HTTPS 图片服务地址。",
+      "default": "",
       "required": false
     }
   },
   "capabilities": {
     "invocationCommands": [
       {
-        "commandIdentifier": "NovelAIGenerateImage",
-        "description": "调用此工具通过 NovelAI API 使用 NAI Diffusion 4.5 Full 模型生成高质量的动漫风格图片。请在您的回复中，使用以下精确格式来请求图片生成，确保所有参数值都用「始」和「末」准确包裹：\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\nprompt:「始」(必需) 用于图片生成的详细【英文】提示词。「末」,\nresolution:「始」(必需) 图片分辨率，可选值：「512x768」、「768x512」、「640x640」、「832x1216」、「1216x832」、「1024x1024」、「1024x1536」、「1536x1024」、「1472x1472」、「1088x1920」、「1920x1088」。「末」\n<<<[END_TOOL_REQUEST]>>>\n\n**NovelAI官方分辨率选项**：\n• **SMALL**: 512x768(竖版), 768x512(横版), 640x640(方形)\n• **NORMAL**: 832x1216(竖版), 1216x832(横版), 1024x1024(方形)\n• **LARGE**: 1024x1536(竖版), 1536x1024(横版), 1472x1472(方形)\n• **WALLPAPER**: 1088x1920(竖版), 1920x1088(横版)\n\n重要提示给AI：\n当此工具执行完毕后，您将收到包含以下信息的结果：\n1. 生成图片的公开访问URL。\n2. 图片在服务器上的存储相对路径 (例如：image/novelaigen/图片名.png)。\n3. 图片的文件名。\n请在您的最终回复中，使用返回的【图片URL】为用户生成一个HTML的 `<img>` 标签来直接展示图片，例如：`<img src=\"[此处填写图片URL]\" alt=\"[此处可填写部分prompt作为描述]\" width=\"300\">`。请确保替换占位符，并可调整 `width` 属性（建议200-500像素）。同时，也可以附带图片的直接URL链接。",
-        "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\nprompt:「始」A majestic cat warrior in futuristic armor, standing on a neon-lit city rooftop at night, cyberpunk style.「末」,\nresolution:「始」1024x1024「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
+        "commandIdentifier": "NovelAIGenerate",
+        "description": "文生图。必需 prompt；可选 model、resolution、steps、scale、sampler、noise_schedule、seed、n_samples(1-4)、uc、vibe、characters。示例使用 command=generate。返回后用 img 标签展示。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」generate「末」,\nprompt:「始」1girl, blue eyes「末」,\nresolution:「始」1024x1024「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAIImg2Img",
+        "description": "图生图。必需 image；可选 prompt、model、resolution、strength(0.01-0.99，默认0.7)、noise(0-0.99，默认0)。返回后用 <img src=\"URL\" width=\"300\"> 展示。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」img2img「末」,\nimage:「始」path/to/image.png「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAIInpaint",
+        "description": "局部重绘。必需 image、mask；action 固定使用 infill。本命令会自动切换到对应的 inpainting 专用模型；没有变体时沿版本链降级并告知。可选 prompt、model、strength、noise、add_original_image。角色 prompt 支持 source#动作 / target#动作 / mutual#动作。返回后用 <img src=\"URL\" width=\"300\"> 展示。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」inpaint「末」,\nimage:「始」input.png「末」,\nmask:「始」mask.png「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAIUpscale",
+        "description": "图片放大。必需 image；scale 允许2或4，默认4；可选 width、height、resolution。返回后用 img 标签展示。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」upscale「末」,\nimage:「始」input.png「末」,\nscale:「始」2「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAIAugment",
+        "description": "Director 工具。必需 image、req_type；req_type 为 emotion/colorize/lineart/sketch/declutter/bg-removal，emotion 可选 emotion/prompt，colorize 可选 defry。返回后用 img 标签展示。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」augment「末」,\nreq_type:「始」colorize「末」,\nimage:「始」input.png「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAIEncodeVibe",
+        "description": "编码 Vibe。必需 image；information_extracted 为数字，默认1；可选 model。编码消耗 2 Anlas。相同图片与相同 information_extracted 值命中本地缓存，不重复消耗。V5 系不支持 Vibe Transfer。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」encode_vibe「末」,\nimage:「始」input.png「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAISuggestTags",
+        "description": "标签建议。必需 prompt；返回纯文本标签列表。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」suggest_tags「末」,\nprompt:「始」blue eyes「末」\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "NovelAISubscription",
+        "description": "查询订阅等级、Anlas 余额与配额状态；未知字段原样返回 JSON。",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」subscription「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
   }
-} 
+}

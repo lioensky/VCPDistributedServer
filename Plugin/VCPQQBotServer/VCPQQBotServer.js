@@ -27,12 +27,54 @@ const OPCODE = {
   HEARTBEAT_ACK: 11
 };
 
-const DEFAULT_SYSTEM_PROMPT = '你是接入 QQ 单聊的 VCPQQBot。你正在通过 VCP 主服务器与 QQ 用户聊天。你可以自然聊天，也可以使用 VCP 工具协议完成任务。若回复中包含图片 URL、Markdown 图片或 HTML img 标签，系统会自动转成 QQ 图片发送。回复应适合 QQ 聊天场景，避免一次性输出过长文本。';
+const DEFAULT_SYSTEM_PROMPT = '你是黑哥VCP，一个接入QQ单聊的AI助手。你正在通过VCP主服务器与QQ用户聊天。你可以自然聊天，也可以使用VCP工具协议完成任务。若回复中包含图片URL、Markdown图片或HTML img标签，系统会自动转成QQ图片发送。回复应适合QQ聊天场景，避免一次性输出过长文本。';
 const STATUS_PLACEHOLDER = '{{VCPQQBotStatus}}';
 const RECENT_PLACEHOLDER = '{{VCPQQRecentMessages}}';
 
 let config = {};
+const KNOWN_GROUPS_FILE = __dirname + '/known_groups.json';
+let knownGroups = new Set(); // 自动注册的群 openid
+
+function loadKnownGroups() {
+  try {
+    const data = require('fs').readFileSync(KNOWN_GROUPS_FILE, 'utf8');
+    JSON.parse(data).forEach(id => knownGroups.add(id));
+  } catch (e) { /* 文件不存在时忽略 */ }
+}
+
+function saveKnownGroup(groupId) {
+  if (!groupId || knownGroups.has(groupId)) return;
+  knownGroups.add(groupId);
+  try {
+    require('fs').writeFileSync(KNOWN_GROUPS_FILE,
+      JSON.stringify([...knownGroups], null, 2), 'utf8');
+  } catch (e) { warn('保存群 ID 失败:', e.message); }
+}
+
+const groupEngageWindows = new Map(); // groupOpenid → 剩余主动参与消息条数
+const groupLastAtMsgId = new Map();   // groupOpenid → {msgId, ts}  最近@mention的msg_id
+const groupMsgSeqCounters = new Map();// `groupOpenid:msgId` → seq 计数器（QQ去重要求每条递增）
+
+function getNextMsgSeq(groupOpenid, msgId) {
+  if (!msgId) return undefined;
+  const key = groupOpenid + ':' + msgId;
+  const seq = (groupMsgSeqCounters.get(key) || 0) + 1;
+  groupMsgSeqCounters.set(key, seq);
+  return seq;
+}
+
+// C2C 被动消息也需 msg_seq 递增:同一 msg_id 多次被动回复(文字+图片多part)
+// 必须每次用不同 msg_seq,否则 QQ 返回 50015014 系统繁忙 / 400
+const c2cMsgSeqCounters = new Map();
+function getC2CMsgSeq(openid, msgId) {
+  if (!msgId) return undefined;
+  const key = openid + ':' + msgId;
+  const seq = (c2cMsgSeqCounters.get(key) || 0) + 1;
+  c2cMsgSeqCounters.set(key, seq);
+  return seq;
+}
 let debugMode = false;
+let accessTokenCache = { token: null, expiresAt: 0 };
 let ws = null;
 let heartbeatTimer = null;
 let reconnectTimer = null;
@@ -90,21 +132,56 @@ function getTokenValue() {
   return String(config.QQBotToken || config.QQAppSecret || '').trim();
 }
 
-function getBotAuthorization() {
+async function getAppAccessToken() {
+  if (accessTokenCache.token && Date.now() < accessTokenCache.expiresAt) {
+    return accessTokenCache.token;
+  }
+  const appId = String(config.QQAppID || '').trim();
+  const clientSecret = String(config.QQAppSecret || '').trim();
+  if (!appId || !clientSecret) {
+    warn('缺少 QQAppID 或 QQAppSecret，无法获取 AppAccessToken，回退到 getTokenValue。');
+    return getTokenValue();
+  }
+  try {
+    const response = await axios.post('https://bots.qq.com/app/getAppAccessToken', {
+      appId,
+      clientSecret
+    }, {
+      timeout: 15000
+    });
+    const data = response.data;
+    if (data.access_token) {
+      const expiresIn = (data.expires_in || 7200) - 60;
+      accessTokenCache.token = data.access_token;
+      accessTokenCache.expiresAt = Date.now() + expiresIn * 1000;
+      log('已获取新的 AppAccessToken。');
+      return data.access_token;
+    }
+    throw new Error(`获取 AppAccessToken 返回格式异常：${JSON.stringify(data)}`);
+  } catch (error) {
+    warn('获取 AppAccessToken 失败:', error.message);
+    return getTokenValue();
+  }
+}
+
+async function getBotAuthorization() {
   const appId = String(config.QQAppID || '').trim();
   const token = getTokenValue();
   const mode = String(config.QQBotAuthMode || 'bot_app_token').trim().toLowerCase();
-  if (mode === 'access_token') return `QQBot ${token}`;
+  if (mode === 'access_token') {
+    const accessToken = await getAppAccessToken();
+    return `QQBot ${accessToken}`;
+  }
   return `Bot ${appId}.${token}`;
 }
 
-function getIdentifyToken() {
-  return getBotAuthorization();
+async function getIdentifyToken() {
+  return await getBotAuthorization();
 }
 
-function getRequestHeaders(extra = {}) {
+async function getRequestHeaders(extra = {}) {
   return {
-    Authorization: getBotAuthorization(),
+    Authorization: await getBotAuthorization(),
     'Content-Type': 'application/json',
     'User-Agent': 'VCPQQBotServer/0.1.0',
     ...extra
@@ -201,6 +278,7 @@ function updatePlaceholders() {
 async function initialize(initialConfig = {}) {
   config = initialConfig || {};
   debugMode = normalizeBoolean(config.DebugMode, false);
+  loadKnownGroups();
   stopped = false;
   updatePlaceholders();
 
@@ -227,7 +305,7 @@ async function initialize(initialConfig = {}) {
 
 async function fetchGatewayInfo() {
   const response = await axios.get(getGatewayUrlApi(), {
-    headers: getRequestHeaders({ Accept: 'application/json' }),
+    headers: await getRequestHeaders({ Accept: 'application/json' }),
     timeout: 15000
   });
   if (!response.data || !response.data.url) {
@@ -308,8 +386,8 @@ async function handleGatewayMessage(data) {
   switch (payload.op) {
     case OPCODE.HELLO:
       heartbeatInterval = normalizeInteger(payload.d && payload.d.heartbeat_interval, heartbeatInterval);
-      if (sessionId && latestSeq !== null) sendResume();
-      else sendIdentify();
+      if (sessionId && latestSeq !== null) await sendResume();
+      else await sendIdentify();
       break;
     case OPCODE.HEARTBEAT:
       sendHeartbeat();
@@ -347,11 +425,11 @@ function parsePayload(data) {
   }
 }
 
-function sendIdentify() {
+async function sendIdentify() {
   const payload = {
     op: OPCODE.IDENTIFY,
     d: {
-      token: getIdentifyToken(),
+      token: await getIdentifyToken(),
       intents: computeIntents(),
       shard: [0, 1],
       properties: {
@@ -366,11 +444,11 @@ function sendIdentify() {
   log('已发送 Identify。');
 }
 
-function sendResume() {
+async function sendResume() {
   const payload = {
     op: OPCODE.RESUME,
     d: {
-      token: getIdentifyToken(),
+      token: await getIdentifyToken(),
       session_id: sessionId,
       seq: latestSeq || 0
     }
@@ -410,8 +488,44 @@ function sendWs(payload) {
   return true;
 }
 
+// 入站事件审计(Codex P1-1): 默认关闭,记录事件类型/附件结构,用于判断文件消息是否到达
+const inboundEventAuditLog = [];
+function auditInboundEvent(payload) {
+  if (!normalizeBoolean(config.QQBotInboundEventAudit, false)) return;
+  const t = payload.t;
+  const d = payload.d || {};
+  const atts = Array.isArray(d.attachments) ? d.attachments : [];
+  const audit = {
+    t,
+    hasContent: !!(d.content && String(d.content).trim()),
+    hasAttachments: atts.length > 0,
+    attachmentCount: atts.length,
+    attachments: atts.map(a => ({
+      contentType: a.content_type || a.contentType || null,
+      filename: a.filename || null,
+      size: a.size || null,
+      width: a.width || null,
+      height: a.height || null,
+      hasUrl: !!(a.url)
+      // 不记url/rkey/正文/openid
+    })),
+    isGroup: !!(d.group_openid || d.group_id),
+    isC2C: !!(d.openid || d.author_openid),
+    mentionedBot: (() => {
+      const mentions = Array.isArray(d.mentions) ? d.mentions : [];
+      return mentions.some(m => m.is_you === true || m.bot === true);
+    })()
+  };
+  inboundEventAuditLog.push(audit);
+  if (inboundEventAuditLog.length > 30) inboundEventAuditLog.shift();
+  console.log('[VCPQQBotServer][AUDIT] 事件:', t, '附件:', audit.attachmentCount,
+    JSON.stringify(audit.attachments).slice(0, 300), '@机器人:', audit.mentionedBot);
+}
+
 function handleDispatch(payload) {
   const eventType = payload.t;
+  // Codex P1-1: 入站事件审计(默认关闭,脱敏记录,不记openid/url/rkey/正文)
+  auditInboundEvent(payload);
   if (eventType === 'READY') {
     sessionId = payload.d && payload.d.session_id ? payload.d.session_id : sessionId;
     readyUser = payload.d && payload.d.user ? payload.d.user : readyUser;
@@ -441,6 +555,89 @@ function handleDispatch(payload) {
         type: 'C2C_MESSAGE_CREATE',
         error: error.message
       });
+    });
+    return;
+  }
+
+  if (eventType === 'GROUP_AT_MESSAGE_CREATE') {
+    const event = normalizeGroupAtEvent(payload);
+    if (!event) return;
+    if (event.messageId) {
+      groupLastAtMsgId.set(event.groupOpenid, { msgId: event.messageId, ts: Date.now() });
+    }
+    event.replyMsgId = event.messageId;
+    // 立即预设窗口，避免 AI 处理期间的跟进消息漏掉
+    const preWindowSizeAt = normalizeInteger(config.QQBotGroupEngageWindow, 0);
+    if (preWindowSizeAt > 0) {
+      groupEngageWindows.set(event.groupOpenid, preWindowSizeAt);
+    }
+    handleGroupAtMessage(event).catch(error => {
+      lastError = error.message;
+      warn('处理群@消息失败:', error.message);
+    });
+    return;
+  }
+
+  if (eventType === 'GROUP_MESSAGE_CREATE') {
+    log('[GMC] 收到群消息，group:', (payload.d||{}).group_openid, 'content:', String((payload.d||{}).content||'').slice(0,40));
+    const d = payload.d || {};
+    saveKnownGroup(d.group_openid || d.group_id);
+    const content = String(d.content || '');
+    const mentions = Array.isArray(d.mentions) ? d.mentions : [];
+    const botId = readyUser && readyUser.id ? String(readyUser.id) : '';
+    // 只处理 @机器人 的消息（mentions 标记 bot:true，或内容含 <@!botId>，或文本含机器人显示名——兼容机器人间@不带结构化mention的情况）
+    const botDisplayName = String(config.QQBotDisplayName || '').trim();
+    const isBotMentioned = mentions.some(m => m.bot === true)
+      || (botId && content.includes('<@!' + botId + '>'))
+      || (botDisplayName && content.includes('@' + botDisplayName));
+    if (debugMode) {
+      log('[DBG] GROUP_MESSAGE_CREATE content:', content.slice(0, 80),
+          'botId:', botId, 'mentioned:', isBotMentioned,
+          'mentions:', JSON.stringify(mentions).slice(0, 120));
+    }
+    const engageWindow = normalizeInteger(config.QQBotGroupEngageWindow, 0);
+    const remaining = groupEngageWindows.get(d.group_openid || d.group_id || '') || 0;
+    const shouldRespond = isBotMentioned || remaining > 0;
+    log('[DBG-WIN] group:', d.group_openid, 'remaining:', remaining, 'shouldRespond:', shouldRespond, 'engageWindow:', engageWindow);
+
+    // 每来一条消息都消耗窗口（无论是否响应）
+    if (remaining > 0) {
+      groupEngageWindows.set(d.group_openid || d.group_id || '', remaining - 1);
+    }
+
+    if (!shouldRespond) return;
+
+    const event = normalizeGroupAtEvent(payload);
+    if (!event) return;
+
+    if (isBotMentioned) {
+      // @mention：保存 msg_id，供窗口期回复使用
+      if (event.messageId) {
+        groupLastAtMsgId.set(event.groupOpenid, { msgId: event.messageId, ts: Date.now() });
+      }
+      event.replyMsgId = event.messageId;
+      // 立即预设窗口，避免 AI 处理期间的跟进消息漏掉
+      const preWindowSize = normalizeInteger(config.QQBotGroupEngageWindow, 0);
+      if (preWindowSize > 0) {
+        groupEngageWindows.set(event.groupOpenid, preWindowSize);
+        log('[DBG-WIN-SET] @mention 预设窗口 group:', event.groupOpenid, 'size:', preWindowSize);
+      }
+    } else {
+      // 窗口期：走主动消息，无需 msg_id（需"机器人主动在群聊内发言"权限）
+      event.replyMsgId = null;
+    }
+
+    handleGroupAtMessage(event).catch(error => {
+      lastError = error.message;
+      warn('处理群消息失败:', error.message);
+    });
+    return;
+  }
+
+  if (eventType === 'GROUP_MEMBER_ADD') {
+    handleGroupMemberAdd(payload).catch(error => {
+      lastError = error.message;
+      warn('处理群成员加入失败:', error.message);
     });
     return;
   }
@@ -505,10 +702,12 @@ async function handleC2CMessage(event) {
   });
 
   try {
-    const userText = buildUserMessageText(event);
-    appendHistory(event.openid, { role: 'user', content: userText });
+    const { content: currentUserContent, historyContent, userNotice } = await buildUserMessageText(event);
+    appendHistory(event.openid, { role: 'user', content: historyContent });
 
-    const aiText = await callVcpChat(event.openid);
+    let aiText = await callVcpChat(event.openid, currentUserContent);
+    // Codex P1-2: 低清时确定性追加提示(用户一定收到,不依赖模型是否输出)
+    if (userNotice) aiText = aiText + '\n\n' + userNotice;
     appendHistory(event.openid, { role: 'assistant', content: aiText });
 
     addRecent({
@@ -531,12 +730,296 @@ async function handleC2CMessage(event) {
   }
 }
 
+function normalizeGroupAtEvent(payload) {
+  const d = payload.d || {};
+  const author = d.author || {};
+  const groupOpenid = d.group_openid || d.group_id;
+  const memberOpenid = author.member_openid || author.user_openid || author.openid;
+  // 去掉开头的 @bot mention token（<@!xxx> 格式）
+  const content = String(d.content || '').replace(/^<@!\w+>\s*/, '').trim();
+  const messageId = d.id || d.msg_id || '';
+  const attachments = Array.isArray(d.attachments) ? d.attachments : [];
+  if (!groupOpenid) {
+    warn('GROUP_AT 事件缺少 group_openid:', d);
+    return null;
+  }
+  return {
+    eventId: payload.id || '',
+    eventType: payload.t,
+    seq: payload.s,
+    groupOpenid: String(groupOpenid),
+    memberOpenid: memberOpenid ? String(memberOpenid) : 'unknown',
+    messageId: String(messageId),
+    content,
+    attachments,
+    author,
+    raw: d
+  };
+}
+
+async function handleGroupAtMessage(event) {
+  const lockKey = `group:${event.groupOpenid}`;
+  if (processingLocks.has(lockKey)) {
+    await sendGroupText(event.groupOpenid, '我正在处理上一条消息，请稍等...', null);
+    return;
+  }
+  processingLocks.add(lockKey);
+
+  addRecent({
+    direction: 'in',
+    openid: `${event.groupOpenid}/${event.memberOpenid}`,
+    type: 'GROUP_AT_MESSAGE_CREATE',
+    content: event.content || '[附件消息]'
+  });
+
+  try {
+    const historyKey = `group_${event.groupOpenid}`;
+    // 统一用 buildUserMessageText 处理(含图片附件多模态),补群聊上下文
+    const groupEvent = {
+      openid: historyKey,
+      content: event.content ? `QQ群 openid：${event.groupOpenid}\n发言成员 openid：${event.memberOpenid}\n\n成员消息（群@消息）：\n${event.content}` : `QQ群 openid：${event.groupOpenid}\n发言成员 openid：${event.memberOpenid}`,
+      attachments: event.attachments,
+      author: null
+    };
+    const { content: groupUserContent, historyContent: groupHistoryContent, userNotice: groupUserNotice } = await buildUserMessageText(groupEvent);
+    appendHistory(historyKey, { role: 'user', content: groupHistoryContent });
+    let aiText = await callVcpChat(historyKey, groupUserContent);
+    if (groupUserNotice) aiText = aiText + '\n\n' + groupUserNotice;
+    appendHistory(historyKey, { role: 'assistant', content: aiText });
+
+    addRecent({
+      direction: 'out_ai',
+      openid: event.groupOpenid,
+      type: 'assistant',
+      content: aiText
+    });
+
+    const delayMs = normalizeInteger(config.QQBotSendDelayMs, 800);
+    if (delayMs > 0) await sleep(delayMs);
+
+    const replyId = event.replyMsgId ?? event.messageId;
+    const parts = splitAiReplyToParts(aiText);
+    if (parts.length === 0) {
+      await sendGroupText(event.groupOpenid, aiText || '（空回复）', replyId);
+    } else {
+      for (const [i, part] of parts.entries()) {
+        if (i > 0 && delayMs > 0) await sleep(delayMs);
+        if (part.type === 'image') {
+          if (String(config.QQBotImageMode || 'upload').toLowerCase() === 'text') {
+            await sendGroupText(event.groupOpenid, part.url, replyId);
+          } else {
+            await sendGroupImage(event.groupOpenid, part.url, replyId);
+          }
+        } else if (part.type === 'text' && part.text) {
+          await sendGroupText(event.groupOpenid, part.text, replyId);
+        }
+      }
+    }
+  } catch (error) {
+    lastError = error.message;
+    const errBody = error.response?.data ? JSON.stringify(error.response.data).slice(0, 300) : '';
+    warn('群@消息处理失败:', error.message, errBody);
+    const replyId = event.replyMsgId ?? event.messageId;
+    await sendGroupText(event.groupOpenid, `处理消息时出错：${error.message}`, replyId).catch(e => {
+      warn('发送群错误提示失败:', e.message);
+    });
+  } finally {
+    processingLocks.delete(lockKey);
+    // 机器人回复后重置参与窗口
+    const windowSize = normalizeInteger(config.QQBotGroupEngageWindow, 0);
+    if (windowSize > 0) {
+      groupEngageWindows.set(event.groupOpenid, windowSize);
+      log('[DBG-WIN-RST] 回复后重置窗口 group:', event.groupOpenid, 'size:', windowSize);
+    }
+    updatePlaceholders();
+  }
+}
+
+async function handleGroupMemberAdd(payload) {
+  const d = payload.d || {};
+  const groupOpenid = d.group_openid || d.group_id;
+  const memberOpenid = d.op_member_openid || d.member_openid;
+  const eventId = payload.id || '';
+  if (!groupOpenid) return;
+
+  const delayMs = normalizeInteger(config.QQBotSendDelayMs, 800);
+  if (delayMs > 0) await sleep(delayMs);
+
+  const welcomeMsg = [
+    '欢迎新成员加入！👋',
+    '🎮 群文件里有各种游戏资源，进群先去翻翻！',
+    '📢 记得看群公告，里面有重要规则和活动信息！',
+    '🌐 群主博客：https://your-domain.com/'
+  ].join('\n');
+  await sendGroupText(groupOpenid, welcomeMsg, null, eventId);
+
+  addRecent({
+    direction: 'out',
+    openid: groupOpenid,
+    type: 'group_welcome',
+    content: `新成员 ${memberOpenid || 'unknown'} 进群`
+  });
+}
+
 function summarizeAttachments(attachments) {
   if (!attachments || attachments.length === 0) return '[空消息]';
   return `[附件 ${attachments.length} 个]`;
 }
 
-function buildUserMessageText(event) {
+// 下载QQ图片附件,转base64 data URL(公网可下载,无需鉴权)。
+// 识图模型直接读data URL,不依赖AI服务商拉QQ域名(国内域名可能拉不到)。
+// ===== 图片下载与图源探测(Codex方案第一阶段)=====
+const IMAGE_MAX_BYTES = 12 * 1024 * 1024;      // 单图上限 12MiB
+const IMAGE_MAX_COUNT = 3;                      // 单次最多 3 张
+const IMAGE_TOTAL_MAX_BYTES = 16 * 1024 * 1024; // 总字节预算 16MiB
+const IMAGE_QUALITY_THRESHOLD = { minLongEdge: 1024, minPixels: 800000, minBytes: 30 * 1024 };
+
+// 图片魔数校验(防伪造content-type)
+function detectImageMime(buf) {
+  if (!buf || buf.length < 12) return null;
+  if (buf[0] === 0x89 && buf[1] === 0x50 && buf[2] === 0x4e && buf[3] === 0x47) return 'image/png';
+  if (buf[0] === 0xff && buf[1] === 0xd8 && buf[2] === 0xff) return 'image/jpeg';
+  if (buf[0] === 0x47 && buf[1] === 0x49 && buf[2] === 0x46) return 'image/gif';
+  if (buf.length >= 12 && buf.slice(0, 4).toString() === 'RIFF' && buf.slice(8, 12).toString() === 'WEBP') return 'image/webp';
+  return null;
+}
+
+// 用 sharp 读宽高(无 sharp 返回 null)
+// 真异步读取图片宽高/像素(Codex P1-3: 不能只看字节数)
+async function getImageDimensions(buf) {
+  if (!sharp || !buf) return null;
+  try {
+    const meta = await sharp(buf).metadata();
+    const width = meta.width || 0;
+    const height = meta.height || 0;
+    return { width, height, pixels: width * height, longEdge: Math.max(width, height) };
+  } catch (_) { return null; }
+}
+
+// 判断附件是否为图片(含 octet-stream 但文件名是图片后缀的情况)
+function isImageAttachment(att) {
+  const ct = String(att?.content_type || att?.contentType || '');
+  if (ct.startsWith('image/')) return true;
+  // application/octet-stream 但文件名是图片后缀
+  if (/^(application\/octet-stream|binary\/octet-stream)$/i.test(ct) &&
+      /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(att?.filename || ''))) return true;
+  return /\.(png|jpe?g|gif|webp|bmp)$/i.test(String(att?.filename || ''));
+}
+
+// 下载单个 URL,校验 host/重定向/MIME/魔数/大小,返回 {dataUrl, bytes, mime} 或 null
+async function fetchImageCandidate(url, contentTypeHint) {
+  let finalUrl = url;
+  try {
+    const u = new URL(url);
+    // 允许QQ官方图片域名:群聊 multimedia.nt.qq.com.cn、单聊 grouptalk.c2c.qq.com 等
+    // 统一放行 *.qq.com / *.qq.com.cn(QQ官方域名),拒绝其他外部host
+    const host = u.host.toLowerCase();
+    const isQqHost = host === 'multimedia.nt.qq.com.cn' || host.endsWith('.qq.com.cn') || host.endsWith('.qq.com');
+    if (u.protocol !== 'https:' || !isQqHost) {
+      warn('图片URL host非法,拒绝下载:', u.host);
+      return null;
+    }
+  } catch (_) {
+    warn('图片URL解析失败:', String(url).slice(0, 80));
+    return null;
+  }
+  try {
+    const resp = await axios.get(url, {
+      responseType: 'arraybuffer',
+      timeout: 20000,
+      maxContentLength: IMAGE_MAX_BYTES,
+      // Codex P2: QQ直链不需要跳转,禁用重定向防SSRF到外部host
+      maxRedirects: 0,
+      validateStatus: s => s === 200
+    });
+    const buf = Buffer.from(resp.data);
+    if (buf.length === 0 || buf.length > IMAGE_MAX_BYTES) {
+      warn('图片字节超限或为空:', buf.length);
+      return null;
+    }
+    // 魔数校验(优先于content-type,防伪造)
+    const magicMime = detectImageMime(buf);
+    if (!magicMime) {
+      warn('图片魔数校验失败,非真图片:', buf.length, '字节');
+      return null;
+    }
+    const ct = magicMime;
+    // 读真实宽高(异步)
+    const dims = await getImageDimensions(buf);
+    return {
+      dataUrl: `data:${ct};base64,${buf.toString('base64')}`,
+      bytes: buf.length, mime: ct,
+      width: dims ? dims.width : 0,
+      height: dims ? dims.height : 0,
+      pixels: dims ? dims.pixels : 0,
+      longEdge: dims ? dims.longEdge : 0
+    };
+  } catch (e) {
+    warn('下载图片候选失败:', String(url).slice(0, 80), e.message);
+    return null;
+  }
+}
+
+// 对一张QQ图片附件做图源探测:先下载事件原始URL(spec=0),若开启探测则试其他spec候选,
+// 选像素/字节最大的有效图。返回 {dataUrl, bytes, mime, spec} 或 null。
+async function downloadImageWithProbe(att) {
+  if (!att || !att.url) return null;
+  const probeEnabled = normalizeBoolean(config.QQBotImageVariantProbe, false);
+  const specsRaw = String(config.QQBotImageVariantSpecs || '0,1,2').split(',').map(s => s.trim()).filter(Boolean);
+  const maxCandidates = normalizeInteger(config.QQBotImageProbeMaxCandidates, 3);
+
+  const candidates = [];
+  // 始终先下载原始URL
+  const orig = await fetchImageCandidate(att.url, att.content_type || att.contentType);
+  if (orig) candidates.push({ ...orig, spec: 'orig' });
+
+  // 探测:替换spec参数(仅在probeEnabled时)
+  if (probeEnabled && orig) {
+    let tried = 0;
+    for (const spec of specsRaw) {
+      if (tried >= maxCandidates) break;
+      if (spec === '0') continue; // orig已是spec=0
+      try {
+        const u = new URL(att.url);
+        u.searchParams.set('spec', spec);
+        const cand = await fetchImageCandidate(u.toString(), att.content_type);
+        if (cand) candidates.push({ ...cand, spec });
+        tried++;
+      } catch (_) {}
+    }
+  }
+
+  if (candidates.length === 0) return null;
+  // 选字节最大的(像素数需sharp异步读,这里用字节近似;字节大通常像素多)
+  candidates.sort((a, b) => b.bytes - a.bytes);
+  const best = candidates[0];
+
+  // 脱敏日志:只记元数据,不记url/rkey
+  const probeNote = probeEnabled ? ` (探测${candidates.length}候选: ${candidates.map(c => c.spec+'='+c.bytes+'B').join(', ')})` : '';
+  if (debugMode) console.log('[VCPQQBotServer] 图片下载:', best.bytes, '字节', best.mime, 'spec=' + best.spec + probeNote);
+
+  return {
+    dataUrl: best.dataUrl, bytes: best.bytes, mime: best.mime, spec: best.spec,
+    width: best.width || 0, height: best.height || 0, pixels: best.pixels || 0, longEdge: best.longEdge || 0
+  };
+}
+
+// 判断图片质量是否达标(Codex P1-3: 像素/最长边/字节三者共同判断)
+function isImageQualityAcceptable(imgInfo) {
+  if (!imgInfo) return false;
+  const { bytes, pixels, longEdge } = imgInfo;
+  const t = IMAGE_QUALITY_THRESHOLD;
+  // 任一维度低于阈值即判为低清
+  if (longEdge > 0 && longEdge < t.minLongEdge) return false;
+  if (pixels > 0 && pixels < t.minPixels) return false;
+  if (bytes < t.minBytes) return false;
+  return true;
+}
+
+async function buildUserMessageText(event) {
+  // 返回 {content, historyContent}:
+  //   content: 当前请求用(含完整image_url,让模型识图)
+  //   historyContent: 存历史用(图片脱敏为文本,避免8轮重传base64爆上下文)
   const lines = [];
   lines.push(`QQ 单聊用户 openid：${event.openid}`);
   if (event.author && Object.keys(event.author).length > 0) {
@@ -547,14 +1030,69 @@ function buildUserMessageText(event) {
     lines.push('用户消息：');
     lines.push(event.content);
   }
-  if (event.attachments && event.attachments.length > 0) {
+
+  const imageAtts = (event.attachments || []).filter(isImageAttachment);
+  const otherAtts = (event.attachments || []).filter(a => !isImageAttachment(a));
+
+  const imageParts = [];
+  const imageInfos = [];
+  let totalBytes = 0;
+  let skippedDueToLimit = false;
+
+  if (imageAtts.length > 0) {
+    const allowed = imageAtts.slice(0, IMAGE_MAX_COUNT);
+    if (imageAtts.length > IMAGE_MAX_COUNT) skippedDueToLimit = true;
+
+    for (const att of allowed) {
+      if (totalBytes >= IMAGE_TOTAL_MAX_BYTES) { skippedDueToLimit = true; break; }
+      const info = await downloadImageWithProbe(att);
+      if (info) {
+        imageParts.push({ type: 'image_url', image_url: { url: info.dataUrl } });
+        imageInfos.push(info);
+        totalBytes += info.bytes;
+      }
+    }
+
+    if (imageParts.length > 0) {
+      lines.push('');
+      const qualOk = imageInfos.every(isImageQualityAcceptable);
+      if (!qualOk) {
+        // 质量不达标:不假装看清,提示用户发原图/文件
+        lines.push(`(用户发送了 ${imageParts.length} 张图片,但QQ给的是压缩预览图,细节可能丢失。若需精确识别,请勾选原图发送或把截图作为文件发送。)`);
+      } else {
+        lines.push(`(用户发送了 ${imageParts.length} 张图片,见下方image_url)`);
+      }
+    }
+    if (skippedDueToLimit) {
+      lines.push('(部分图片因数量/字节上限被跳过)');
+    }
+  }
+
+  if (otherAtts.length > 0) {
     lines.push('');
-    lines.push('用户发送的附件：');
-    event.attachments.forEach((att, index) => {
+    lines.push('用户发送的其他附件：');
+    otherAtts.forEach((att, index) => {
       lines.push(`${index + 1}. ${JSON.stringify(att)}`);
     });
   }
-  return lines.join('\n');
+
+  const textStr = lines.join('\n');
+  const textPart = { type: 'text', text: textStr };
+
+  if (imageParts.length > 0) {
+    // 当前请求:多模态数组(含完整image_url)
+    const content = [textPart, ...imageParts];
+    // 历史:脱敏,图片替换为简短文本(避免重传base64)
+    const historyContent = textStr + `\n[本轮已接收并处理 ${imageParts.length} 张图片;如需继续分析细节,请用户重新发送原图或文件。]`;
+    // 质量评估(Codex P1-2: 确定性低清提示)
+    const allAcceptable = imageInfos.every(isImageQualityAcceptable);
+    const imageQuality = allAcceptable ? 'acceptable' : 'low';
+    const userNotice = allAcceptable ? null
+      : '我已收到图片,但 QQ 提供的是压缩预览图,细小文字无法可靠辨认。请勾选原图发送,或将截图作为文件发送。';
+    return { content, historyContent, imageQuality, userNotice };
+  }
+  // 纯文字:content和historyContent相同(字符串)
+  return { content: textStr, historyContent: textStr, imageQuality: 'none', userNotice: null };
 }
 
 function appendHistory(openid, message) {
@@ -570,15 +1108,24 @@ function getHistory(openid) {
   return histories.get(String(openid)) || [];
 }
 
-async function callVcpChat(openid) {
+async function callVcpChat(openid, currentContent = null) {
   const port = config.PORT;
   const key = config.Key;
   if (!port || !key) throw new Error('VCP PORT 或 Key 未注入。');
 
   const systemPrompt = String(config.QQBotSystemPrompt || DEFAULT_SYSTEM_PROMPT).trim();
+  // 历史用脱敏版(不含图片base64),当前请求用完整content(含image_url)让模型识图
+  const history = getHistory(openid);
+  // 历史最后一条是当前user(脱敏),若有currentContent则替换为完整版
+  let userMessages;
+  if (currentContent !== null && history.length > 0 && history[history.length - 1].role === 'user') {
+    userMessages = [...history.slice(0, -1), { role: 'user', content: currentContent }];
+  } else {
+    userMessages = history;
+  }
   const messages = [
     { role: 'system', content: systemPrompt },
-    ...getHistory(openid)
+    ...userMessages
   ];
 
   const payload = {
@@ -602,9 +1149,28 @@ async function callVcpChat(openid) {
     timeout: normalizeInteger(config.QQBotRequestTimeoutMs, 300000)
   });
 
-  const text = extractAssistantText(response.data);
-  if (!text) throw new Error(`VCP 主服务器返回空回复：${JSON.stringify(response.data).slice(0, 500)}`);
-  return text;
+  const rawText = extractAssistantText(response.data);
+  if (!rawText) throw new Error(`VCP 主服务器返回空回复：${JSON.stringify(response.data).slice(0, 500)}`);
+  // 兜底:剥离任何残留工具协议块,群里只发可见自然语言
+  return sanitizeForQQ(rawText);
+}
+
+// 兜底:剥离所有 VCP 工具协议块,保证群里绝不出现 <<<[...>>> / [本轮工具调用摘要:] 等标记。
+// 即使主服务 clientResponseRenderer 漏处理,这层是最后防线。
+function sanitizeForQQ(text) {
+  if (!text || typeof text !== 'string') return text;
+  let out = text;
+  // 完整工具请求块(含 _ESCAPE 变体)
+  out = out.replace(/<{2,4}\[TOOL_REQUEST(?:_ESCAPE)?\]>{2,4}[\s\S]*?<{2,4}\[END_TOOL_REQUEST(?:_ESCAPE)?\]>{2,4}/g, '');
+  // 工具调用摘要块
+  out = out.replace(/\[本轮工具调用摘要[:：]\][\s\S]*?\[本轮工具调用摘要结束\]/g, '');
+  // 角色分割标记
+  out = out.replace(/<{2,4}\[(?:END_)?ROLE_DIVIDE_USER\]>{2,4}/g, '');
+  // VCP 工具信息展示块
+  out = out.replace(/<!--\s*VCP_TOOL_PAYLOAD\s*-->[\s\S]*?(?=<{2,4}\[END_|$)/g, '');
+  // 多余空行压缩
+  out = out.replace(/\n{3,}/g, '\n\n');
+  return out.trim();
 }
 
 function extractAssistantText(data) {
@@ -793,10 +1359,13 @@ async function sendC2CText(openid, content, msgId) {
     msg_type: 0,
     content: String(content || '')
   };
-  if (msgId) payload.msg_id = String(msgId);
+  if (msgId) {
+    payload.msg_id = String(msgId);
+    payload.msg_seq = getC2CMsgSeq(openid, msgId);
+  }
 
   const response = await axios.post(`${getBaseUrl()}/v2/users/${encodeURIComponent(openid)}/messages`, payload, {
-    headers: getRequestHeaders(),
+    headers: await getRequestHeaders(),
     timeout: 30000
   });
 
@@ -809,11 +1378,318 @@ async function sendC2CText(openid, content, msgId) {
   return response.data;
 }
 
+/** 提取 axios 请求失败的真实原因：QQ API 通常在 response.data 里给 {code,message}，
+ *  之前只拿 e.message 会丢掉这些信息，变成没法诊断的 "Request failed with status code 400"。 */
+function formatSendError(e) {
+  if (e && e.response) {
+    const status = e.response.status;
+    let detail = '';
+    try {
+      const data = e.response.data;
+      detail = typeof data === 'string' ? data : JSON.stringify(data);
+    } catch { /* ignore */ }
+    return `HTTP ${status}${detail ? ' ' + detail : ''}`;
+  }
+  return e && e.message ? e.message : String(e);
+}
+
+async function sendGroupText(groupOpenid, content, msgId, eventId) {
+  const payload = {
+    msg_type: 0,
+    content: String(content || '')
+  };
+  if (msgId) {
+    payload.msg_id = String(msgId);
+    payload.msg_seq = getNextMsgSeq(groupOpenid, msgId);
+  } else if (eventId) {
+    payload.event_id = String(eventId);
+  }
+
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/groups/${encodeURIComponent(groupOpenid)}/messages`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 30000 }
+  );
+  addRecent({
+    direction: 'out',
+    openid: groupOpenid,
+    type: 'group_text',
+    content
+  });
+  return response.data;
+}
+
+// 表情包文件名模糊匹配:flash模型常编造不存在的文件名(如比心.jpeg,实际只有比心.png),
+// 导致QQ拉取404。上传前检查文件是否存在,不存在按相似度匹配真实文件。
+const fs = require('fs');
+const path = require('path');
+let sharp;
+try { sharp = require('../../node_modules/sharp'); } catch (_) { sharp = null; } // 图片压缩兜底,可选
+const IMAGE_ROOT = path.join(__dirname, '..', '..', 'image');
+const emojiDirCache = new Map(); // dir -> 文件名数组
+
+function listEmojiDir(dirRel) {
+  if (emojiDirCache.has(dirRel)) return emojiDirCache.get(dirRel);
+  const absDir = path.join(IMAGE_ROOT, dirRel);
+  let files = [];
+  try { files = fs.readdirSync(absDir).filter(f => fs.statSync(path.join(absDir, f)).isFile()); }
+  catch (_) { files = []; }
+  emojiDirCache.set(dirRel, files);
+  return files;
+}
+
+// Levenshtein编辑距离(小规模文件名用,性能可接受)
+function editDistance(a, b) {
+  const m = a.length, n = b.length;
+  const dp = Array.from({ length: m + 1 }, () => new Array(n + 1).fill(0));
+  for (let i = 0; i <= m; i++) dp[i][0] = i;
+  for (let j = 0; j <= n; j++) dp[0][j] = j;
+  for (let i = 1; i <= m; i++) {
+    for (let j = 1; j <= n; j++) {
+      dp[i][j] = a[i-1] === b[j-1] ? dp[i-1][j-1] : 1 + Math.min(dp[i-1][j-1], dp[i-1][j], dp[i][j-1]);
+    }
+  }
+  return dp[m][n];
+}
+
+// 解析子路径(如 通用表情包/比心.jpeg),检查文件是否存在,不存在模糊匹配。
+// 返回修正后的子路径(可能换文件名),匹配不到返回原值(让上游404回退)。
+function resolveEmojiFile(subpath) {
+  if (!subpath) return subpath;
+  const absPath = path.join(IMAGE_ROOT, subpath);
+  try {
+    if (fs.existsSync(absPath)) return subpath; // 文件存在,无需修正
+  } catch (_) {}
+  // 拆出目录和文件名
+  const sep = subpath.lastIndexOf('/');
+  const dirRel = sep >= 0 ? subpath.slice(0, sep) : '';
+  const fileName = sep >= 0 ? subpath.slice(sep + 1) : subpath;
+  const files = listEmojiDir(dirRel);
+  if (files.length === 0) return subpath;
+  // 优先级1:同名不同扩展名(比心.jpeg -> 比心.png)
+  const dot = fileName.lastIndexOf('.');
+  const stem = dot > 0 ? fileName.slice(0, dot) : fileName;
+  const sameStem = files.filter(f => {
+    const fd = f.lastIndexOf('.');
+    return (fd > 0 ? f.slice(0, fd) : f) === stem;
+  });
+  if (sameStem.length > 0) {
+    return (dirRel ? dirRel + '/' : '') + sameStem[0];
+  }
+  // 优先级2:编辑距离最近(阈值<=2,避免离谱匹配)
+  let best = null, bestDist = 3;
+  for (const f of files) {
+    const d = editDistance(fileName, f);
+    if (d < bestDist) { bestDist = d; best = f; }
+  }
+  if (best) {
+    return (dirRel ? dirRel + '/' : '') + best;
+  }
+  return subpath; // 匹配不到,返回原值
+}
+
+// 从 imageUrl 解析本地文件路径(复用 resolveEmojiFile 模糊匹配),读为 Buffer。
+// 返回 {buf, subpath} 或 null(非本地URL/文件不存在)。
+function readLocalImage(imageUrl) {
+  const m = String(imageUrl || '').match(/\/pw=[^/]+\/images\/(.+)$/);
+  if (!m) return null; // 非鉴权图片URL,无法定位本地文件
+  const subpath = resolveEmojiFile(m[1]);
+  const absPath = path.join(IMAGE_ROOT, subpath);
+  try {
+    if (!fs.existsSync(absPath)) return null;
+    const buf = fs.readFileSync(absPath);
+    return { buf, subpath };
+  } catch (_) { return null; }
+}
+
+// 用 sharp 压缩图片到目标大小(默认150KB)。GIF 跳过(动图压缩丢帧)。
+// 返回压缩后的 Buffer,失败返回 null。
+async function compressImage(buf, targetKB = 150) {
+  if (!sharp || !buf) return null;
+  const subpath = arguments[2] || '';
+  if (/\.gif$/i.test(subpath)) return null; // GIF 不压缩
+  try {
+    const targetBytes = targetKB * 1024;
+    // 先尝试 jpeg 质量80,再降;png 用调色板
+    let out = await sharp(buf, { animated: false })
+      .resize({ width: 400, withoutEnlargement: true }) // 限制宽度,表情包够用
+      .jpeg({ quality: 80, mozjpeg: true })
+      .toBuffer();
+    if (out.length > targetBytes) {
+      out = await sharp(buf, { animated: false })
+        .resize({ width: 320, withoutEnlargement: true })
+        .jpeg({ quality: 60, mozjpeg: true })
+        .toBuffer();
+    }
+    return out;
+  } catch (e) {
+    warn('sharp压缩失败:', e.message);
+    return null;
+  }
+}
+
+// file_data base64 直传上传(群)。返回 file_info 或抛错。
+async function uploadGroupImageByFileData(groupOpenid, buf) {
+  const payload = {
+    file_type: 1,
+    file_data: buf.toString('base64'),
+    srv_send_msg: false
+  };
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/groups/${encodeURIComponent(groupOpenid)}/files`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 60000 }
+  );
+  return response.data;
+}
+
+// file_data base64 直传上传(C2C)。返回 file_info 或抛错。
+async function uploadC2CImageByFileData(openid, buf) {
+  const payload = {
+    file_type: 1,
+    file_data: buf.toString('base64'),
+    srv_send_msg: false
+  };
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/users/${encodeURIComponent(openid)}/files`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 60000 }
+  );
+  return response.data;
+}
+
+// 统一的 file_data 直传 + 压缩兜底(群)。返回 file_info 或 null。
+async function uploadGroupImageSmart(groupOpenid, imageUrl) {
+  const local = readLocalImage(imageUrl);
+  if (local) {
+    // 优先 file_data 直传原图
+    try {
+      const up = await uploadGroupImageByFileData(groupOpenid, local.buf);
+      const fi = up.file_info || up.fileInfo || up.data?.file_info || up.data?.fileInfo;
+      if (fi) { console.log("[VCPQQBotServer] 群图片file_data直传成功:", local.subpath, "("+local.buf.length+"字节)"); return fi; }
+      throw new Error('群file_data上传未返回file_info');
+    } catch (e1) {
+      // 原图失败(可能过大) -> sharp压缩再直传
+      const compressed = await compressImage(local.buf, 150, local.subpath);
+      if (compressed) {
+        try {
+          const up2 = await uploadGroupImageByFileData(groupOpenid, compressed);
+          const fi2 = up2.file_info || up2.fileInfo || up2.data?.file_info || up2.data?.fileInfo;
+          if (fi2) return fi2;
+        } catch (e2) {
+          warn('群图片压缩后直传仍失败:', e2.message);
+        }
+      }
+      // 压缩也失败或不可用,回退URL方式
+      warn('群图片file_data直传失败,回退URL方式:', e1.message);
+    }
+  }
+  // 非本地URL 或 file_data全失败 -> 回退URL上传
+  const publicUrl = toPublicImageUrl(imageUrl) || imageUrl;
+  const payload = { file_type: 1, url: publicUrl, srv_send_msg: false };
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/groups/${encodeURIComponent(groupOpenid)}/files`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 60000 }
+  );
+  const fi = response.data.file_info || response.data.fileInfo || response.data?.file_info || response.data?.fileInfo;
+  return fi || null;
+}
+
+// 统一的 file_data 直传 + 压缩兜底(C2C)。返回 file_info 或 null。
+async function uploadC2CImageSmart(openid, imageUrl) {
+  const local = readLocalImage(imageUrl);
+  if (local) {
+    try {
+      const up = await uploadC2CImageByFileData(openid, local.buf);
+      const fi = up.file_info || up.fileInfo || up.data?.file_info || up.data?.fileInfo;
+      if (fi) { console.log("[VCPQQBotServer] C2C图片file_data直传成功:", local.subpath, "("+local.buf.length+"字节)"); return fi; }
+      throw new Error('C2C file_data上传未返回file_info');
+    } catch (e1) {
+      const compressed = await compressImage(local.buf, 150, local.subpath);
+      if (compressed) {
+        try {
+          const up2 = await uploadC2CImageByFileData(openid, compressed);
+          const fi2 = up2.file_info || up2.fileInfo || up2.data?.file_info || up2.data?.fileInfo;
+          if (fi2) return fi2;
+        } catch (e2) {
+          warn('C2C图片压缩后直传仍失败:', e2.message);
+        }
+      }
+      warn('C2C图片file_data直传失败,回退URL方式:', e1.message);
+    }
+  }
+  const publicUrl = toPublicImageUrl(imageUrl) || imageUrl;
+  const payload = { file_type: 1, url: publicUrl, srv_send_msg: false };
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/users/${encodeURIComponent(openid)}/files`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 60000 }
+  );
+  const fi = response.data.file_info || response.data.fileInfo || response.data?.file_info || response.data?.fileInfo;
+  return fi || null;
+}
+
+function toPublicImageUrl(url) {
+  // 把 VCP 鉴权图片 URL 转成 Nginx /stickers/ 公开路径
+  // 输入: https://domain:6005/pw=KEY/images/subdir/file.ext
+  // 输出: https://domain/stickers/<encoded subpath>
+  // 修复:对中文子路径做 encodeURI,否则 QQ 服务器拉取时 express.static 中文路径返回 400
+  const m = String(url || '').match(/\/pw=[^/]+\/images\/(.+)$/);
+  if (!m) return url;
+  const base = String(config.QQBotPublicBaseUrl || '').replace(/\/$/, '');
+  if (!base) return url; // 未配置则不转换
+  return `${base}/stickers/${encodeURI(resolveEmojiFile(m[1]))}`;
+}
+
+async function uploadGroupImageByUrl(groupOpenid, imageUrl) {
+  const payload = {
+    file_type: 1,
+    url: imageUrl,
+    srv_send_msg: false
+  };
+  const response = await axios.post(
+    `${getBaseUrl()}/v2/groups/${encodeURIComponent(groupOpenid)}/files`,
+    payload,
+    { headers: await getRequestHeaders(), timeout: 60000 }
+  );
+  return response.data;
+}
+
+async function sendGroupImage(groupOpenid, imageUrl, msgId, eventId) {
+  try {
+    const fileInfo = await uploadGroupImageSmart(groupOpenid, imageUrl);
+    if (!fileInfo) throw new Error('群图片上传未返回 file_info(直传+URL均失败)');
+
+    const payload = { msg_type: 7, media: { file_info: fileInfo } };
+    if (msgId) {
+      payload.msg_id = String(msgId);
+      payload.msg_seq = getNextMsgSeq(groupOpenid, msgId);
+    } else if (eventId) {
+      payload.event_id = String(eventId);
+    }
+
+    const response = await axios.post(
+      `${getBaseUrl()}/v2/groups/${encodeURIComponent(groupOpenid)}/messages`,
+      payload,
+      { headers: await getRequestHeaders(), timeout: 30000 }
+    );
+    addRecent({ direction: 'out', openid: groupOpenid, type: 'group_image', content: imageUrl });
+    return response.data;
+  } catch (error) {
+    // 修复:回退时禁止泄露鉴权URL(pw=KEY)。优先用已转换的公开URL;
+    // 若未配置 QQBotPublicBaseUrl 导致 publicUrl 为原始鉴权URL,则发占位提示,绝不把密钥发到群里。
+    // 硬约束:绝不回退成 [图片: URL] 文本链接(QQ显示不了,只显示一行字)。
+    // 上传失败静默跳过(只记日志),群里只看到文字部分或啥都不发。
+    warn('发送群图片失败(静默跳过,不发文本链接):', imageUrl, error.message);
+    return null;
+  }
+}
+
 async function sendC2CImage(openid, imageUrl, msgId) {
   try {
-    const upload = await uploadC2CImageByUrl(openid, imageUrl);
-    const fileInfo = upload.file_info || upload.fileInfo || upload.data?.file_info || upload.data?.fileInfo;
-    if (!fileInfo) throw new Error(`图片上传未返回 file_info：${JSON.stringify(upload).slice(0, 300)}`);
+    const fileInfo = await uploadC2CImageSmart(openid, imageUrl);
+    if (!fileInfo) throw new Error('图片上传未返回 file_info(直传+URL均失败)');
 
     const payload = {
       msg_type: 7,
@@ -821,10 +1697,13 @@ async function sendC2CImage(openid, imageUrl, msgId) {
         file_info: fileInfo
       }
     };
-    if (msgId) payload.msg_id = String(msgId);
+    if (msgId) {
+      payload.msg_id = String(msgId);
+      payload.msg_seq = getC2CMsgSeq(openid, msgId);
+    }
 
     const response = await axios.post(`${getBaseUrl()}/v2/users/${encodeURIComponent(openid)}/messages`, payload, {
-      headers: getRequestHeaders(),
+      headers: await getRequestHeaders(),
       timeout: 30000
     });
 
@@ -836,8 +1715,10 @@ async function sendC2CImage(openid, imageUrl, msgId) {
     });
     return response.data;
   } catch (error) {
-    warn('发送 QQ 图片失败，回退为文本 URL:', imageUrl, error.message);
-    return await sendC2CText(openid, `图片：${imageUrl}`, msgId);
+    // 修复:同 sendGroupImage,回退禁止泄露鉴权URL。
+    // 硬约束:同 sendGroupImage,绝不回退成 [图片: URL] 文本链接。静默跳过。
+    warn('发送 QQ 图片失败(静默跳过,不发文本链接):', imageUrl, error.message);
+    return null;
   }
 }
 
@@ -849,7 +1730,7 @@ async function uploadC2CImageByUrl(openid, imageUrl) {
   };
 
   const response = await axios.post(`${getBaseUrl()}/v2/users/${encodeURIComponent(openid)}/files`, payload, {
-    headers: getRequestHeaders(),
+    headers: await getRequestHeaders(),
     timeout: 60000
   });
   return response.data;
@@ -913,6 +1794,57 @@ async function processToolCall(params = {}) {
           command: 'status'
         }
       };
+    case 'broadcast_to_groups': {
+      const content = String(params.content || '').trim();
+      if (!content) throw new Error('broadcast_to_groups 缺少 content 参数');
+      // 优先用 config 配置的群，没配置则用自动注册的群
+      const configGroups = splitList(config.QQBotBroadcastGroups);
+      const targetGroups = configGroups.length > 0 ? configGroups : [...knownGroups];
+      if (targetGroups.length === 0) throw new Error('未找到目标群，请先让 bot 在群里收到消息，或在 QQBotBroadcastGroups 配置群 ID');
+      const results = [];
+      for (const gid of targetGroups) {
+        const id = String(gid).trim();
+        if (!id) continue;
+        try {
+          await sendGroupText(id, content, null, null);
+          results.push(`✅ 群 ${id.slice(0, 8)}...: 发送成功`);
+        } catch (e) {
+          results.push(`❌ 群 ${id.slice(0, 8)}...: ${formatSendError(e)}`);
+        }
+      }
+      return {
+        content: [{ type: 'text', text: '群播结果（共' + targetGroups.length + '个群）：\n' + results.join('\n') }],
+        meta: { plugin: 'VCPQQBotServer', command: 'broadcast_to_groups', groups: targetGroups.length }
+      };
+    }
+    case 'broadcast_draft_file': {
+      const draftPath = __dirname + '/draft_morning_brief.txt';
+      let content;
+      try {
+        content = require('fs').readFileSync(draftPath, 'utf8').trim();
+      } catch (e) {
+        throw new Error('broadcast_draft_file 读取草稿文件失败: ' + e.message);
+      }
+      if (!content) throw new Error('broadcast_draft_file 草稿文件为空，请先执行撰写步骤');
+      const configGroups = splitList(config.QQBotBroadcastGroups);
+      const targetGroups = configGroups.length > 0 ? configGroups : [...knownGroups];
+      if (targetGroups.length === 0) throw new Error('未找到目标群，请先让 bot 在群里收到消息，或在 QQBotBroadcastGroups 配置群 ID');
+      const results = [];
+      for (const gid of targetGroups) {
+        const id = String(gid).trim();
+        if (!id) continue;
+        try {
+          await sendGroupText(id, content, null, null);
+          results.push('✅ 群 ' + id.slice(0, 8) + '...: 发送成功');
+        } catch (e) {
+          results.push('❌ 群 ' + id.slice(0, 8) + '...: ' + formatSendError(e));
+        }
+      }
+      return {
+        content: [{ type: 'text', text: '草稿群播结果（共' + targetGroups.length + '个群）：' + '\n' + results.join('\n') }],
+        meta: { plugin: 'VCPQQBotServer', command: 'broadcast_draft_file', groups: targetGroups.length }
+      };
+    }
     default:
       throw new Error(`未知 command: ${command}。QQ 单聊回复不需要工具调用，AI 正常输出自然语言即可。`);
   }

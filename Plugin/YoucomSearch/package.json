@@ -1,0 +1,20 @@
+{
+  "name": "youcom-search-vcp-plugin",
+  "version": "0.1.0",
+  "description": "VCP plugin for searching web and news results via the You.com API.",
+  "main": "YoucomSearch.js",
+  "scripts": {
+    "test": "node --test script/youcomSearch.test.js"
+  },
+  "keywords": [
+    "vcp",
+    "plugin",
+    "you.com",
+    "search"
+  ],
+  "author": "Emos21",
+  "license": "MIT",
+  "dependencies": {
+    "axios": "^1.7.9"
+  }
+}

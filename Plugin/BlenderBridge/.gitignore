@@ -1,0 +1,30 @@
+# 本地配置，含端口与路径等机器相关设置
+config.env
+
+# 模型接入配置。这是使用者的私有选择，不该进版本库。
+# 模板见 gmr/model_config.example.json
+gmr/model_config.json
+
+# GMR 运行时数据：checkpoint、训练日志、任务状态、数据集
+# 首次调用命令时自动创建，不必入库
+gmr_data/
+
+# Add-on 打包产物。用 build_addon.py 现场生成即可。
+*.zip
+
+# Python 字节码
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+
+# Node
+node_modules/
+
+# 编辑器与系统
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+.idea/
+.vscode/
