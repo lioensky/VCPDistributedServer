@@ -1,0 +1,29 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "SerplySearch",
+  "displayName": "Serply 搜索插件",
+  "version": "0.1.0",
+  "description": "使用 Serply API 进行网络搜索，返回 Google 搜索结果。AI可以指定搜索查询、返回结果数量、网页或新闻类别、时效范围、国家及语言。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+  "author": "Serply",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node SerplySearch.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 30000
+  },
+  "configSchema": {
+      "SerplyKey": "string"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "SerplySearch",
+        "description": "调用此工具使用 Serply API 进行网络搜索，返回 Google 的网页或新闻结果。重要提示：请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。请在您的回复中，使用以下精确格式来请求搜索，确保所有参数值都用「始」和「末」准确包裹：\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」SerplySearch「末」,\nquery:「始」(必需) 搜索的关键词或问题，支持使用 | 分隔多个关键词进行并发搜索。也支持 Google 搜索语法，例如 site:arxiv.org 大语言模型「末」,\ncount:「始」(可选, 默认为 10) 返回的最大结果数量，范围 1-10，超出上限将自动截断为 10。注意该值是近似上限，实际返回条数可能少于请求值。「末」,\ntopic:「始」(可选, 默认为 general) 搜索类别，只允许 'general'（网页结果）或 'news'（新闻结果）之一。「末」,\ntime_range:「始」(可选) 限定结果的时效范围，只允许 'day'（一天内）、'week'（一周内）、'month'（一月内）、'year'（一年内）之一，也接受简写 'd'、'w'、'm'、'y'。「末」,\ncountry:「始」(可选) 搜索结果的国家来源，使用 ISO 国家代码，例如 'cn'（中国）、'us'（美国）。「末」,\nlanguage:「始」(可选) 搜索结果的语言，使用 ISO 语言代码，例如 'zh'、'en'。「末」\n<<<[END_TOOL_REQUEST]>>>\n\n重要提示给AI：\n当此工具执行完毕后，您将收到包含搜索结果的JSON对象。请基于这些结果回答用户的问题或完成相关任务。\n请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。",
+        "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」SerplySearch「末」,\nquery:「始」最近一周的AI技术进展「末」,\ncount:「始」5「末」,\ntopic:「始」news「末」,\ntime_range:「始」week「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
+      }
+    ]
+  }
+}

@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-03T15:00:17.822631+00:00",
+  "generatedAt": "2026-09-16T02:59:54.486024+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -278,6 +278,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerpSearch/SerpSearch.zip"
     },
     {
+      "name": "SerplySearch",
+      "displayName": "Serply 搜索插件",
+      "description": "使用 Serply API 进行网络搜索，返回 Google 搜索结果。AI可以指定搜索查询、返回结果数量、网页或新闻类别、时效范围、国家及语言。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+      "version": "0.1.0",
+      "author": "Serply",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerplySearch/SerplySearch.zip"
+    },
+    {
       "name": "SunoGen",
       "displayName": "Suno AI 音乐生成",
       "description": "使用 Suno API 生成原创歌曲。该版本为Newapi代理的通用版本。支持通过歌词、风格、标题进行自定义创作，或通过描述获取灵感创作，还可以继续生成已有的歌曲片段。",
@@ -511,7 +521,7 @@
     {
       "name": "VolcSearch",
       "displayName": "火山引擎搜索插件",
-      "description": "使用火山引擎联网搜索 API 进行中文网络搜索。AI可以指定搜索查询、返回结果数量，并可选择包含正文内容、设置搜索时间范围等。支持使用 || 分隔多个关键词进行并发搜索，所有结果同时返回。",
+      "description": "使用火山引擎联网搜索 API 进行中文网络搜索。AI可以指定搜索查询、返回结果数量，并可选择包含正文内容、设置搜索时间范围等。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
       "version": "0.3.0",
       "author": "Roo",
       "icon": "extension",
