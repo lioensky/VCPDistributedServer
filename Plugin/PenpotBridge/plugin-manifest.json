@@ -1,0 +1,30 @@
+{
+  "name": "PenpotBridge",
+  "displayName": "Penpot 设计桥接器",
+  "version": "1.0.0",
+  "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "command": "node PenpotBridge.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 70000
+  },
+  "configSchema": {
+    "PENPOT_MCP_URL": "string",
+    "PENPOT_MCP_USER_TOKEN": "string",
+    "REQUEST_TIMEOUT_MS": "integer",
+    "MCP_PROTOCOL_VERSION": "string",
+    "DebugMode": "boolean"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "PenpotBridge",
+        "description": "通过 command 字段选择子命令来操作 Penpot 设计文件。\n\n【前置条件】必须先在浏览器打开 Penpot、加载并连接 MCP 插件（插件 UI 不能关），且 mcp-server 已启动。\n\n【推荐工作流】首次使用先调用 overview 读一次高层说明；需要底层 API 细节时用 api_info 查文档；日常操作优先用语义化高层命令；高层命令覆盖不到时才用 exec 逃生舱手写代码。\n\n【子命令】\n- overview: 读 Penpot 工具与 API 的高层使用说明（一次性，读过勿重复调用）。无其它参数。\n- api_info: 查 Penpot API 类型文档。参数 type(必需，如 Penpot/Shape/Board)、member(可选，具体成员名)。\n- list_pages: 列出当前文件所有页面及顶层结构。无参数。\n- get_selection: 读取当前在 Penpot 中选中的图形。无参数。\n- get_page_tree: 读取当前页面的浅层结构树（深度 3）。无参数。\n- create_rect: 创建矩形。参数 x/y/width/height(数值)、name(可选)、fill(可选，如 #FF0000)。\n- create_text: 创建文本。参数 text(必需)、x/y(数值)、fontSize(可选)、fill(可选)。\n- export: 导出图形。参数 shapeId(可选，默认当前选中)、format(可选 png/svg/pdf)、scale(可选)。\n- exec: 逃生舱，执行任意 JS。参数 code(必需)。代码在 Penpot 插件上下文运行，可用 penpot / penpotUtils / storage 对象；想象成函数体，return 即返回值。\n\n【调用示例：列出页面】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」PenpotBridge「末exp」,\ncommand:「始exp」list_pages「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【调用示例：创建矩形】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」PenpotBridge「末exp」,\ncommand:「始exp」create_rect「末exp」,\nx:「始exp」100「末exp」,\ny:「始exp」100「末exp」,\nwidth:「始exp」200「末exp」,\nheight:「始exp」80「末exp」,\nname:「始exp」按钮底板「末exp」,\nfill:「始exp」#4A90E2「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>\n\n【调用示例：逃生舱执行任意代码】\n<<<[TOOL_REQUEST_EXP]>>>\ntool_name:「始exp」PenpotBridge「末exp」,\ncommand:「始exp」exec「末exp」,\ncode:「始exp」const b = penpot.createBoard(); b.name = '对策板'; b.resize(400, 300); return { id: b.id };「末exp」\n<<<[END_TOOL_REQUEST_EXP]>>>",
+        "example": "调用 list_pages 查看当前 Penpot 文件结构。"
+      }
+    ]
+  }
+}
