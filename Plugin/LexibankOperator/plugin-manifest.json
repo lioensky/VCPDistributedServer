@@ -1,0 +1,92 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "LexibankOperator",
+  "version": "1.1.0",
+  "displayName": "全球词源追溯引擎 (LexibankOperator)",
+  "description": "基于 MPI-EVA Lexibank² (CLDF规范) 与依赖倒置架构的全球跨语系词源追溯与音系分析引擎。支持 Jev 功能决策精排、上游热更新与蓝绿无缝热切。",
+  "author": "ATRI",
+  "pluginType": "hybridservice",
+  "requiresJevClient": true,
+  "entryPoint": {
+    "script": "LexibankOperator.js"
+  },
+  "communication": {
+    "protocol": "direct"
+  },
+  "configSchema": {
+    "LEXIBANK_UPSTREAM_PATH": {
+      "type": "string",
+      "description": "上游 Lexibank² CLDF 数据源挂载路径。",
+      "default": ""
+    },
+    "LEXIBANK_DB_PATH": {
+      "type": "string",
+      "description": "SQLite 索引库存储目录（蓝绿双槽位所在目录）。",
+      "default": ""
+    },
+    "LEXIBANK_AUTO_SYNC": {
+      "type": "boolean",
+      "description": "是否在启动时自动检测上游指纹并按需同步。",
+      "default": false
+    },
+    "LEXIBANK_DEFAULT_LIMIT": {
+      "type": "number",
+      "description": "查询类命令的默认返回条数上限。",
+      "default": 50
+    },
+    "JevRerankPrompt": {
+      "type": "string",
+      "description": "LexibankOperator Jev 精排决策指令：决定候选词形的语言学价值排序。",
+      "default": "请选择最值得用于回答当前词源/音系查询的候选。优先考虑：同源集一致性、音变规律可解释性、语系覆盖度、Glottocode 权威性、Concepticon 对齐度；压低：孤立方言变体、重复词形、拼写噪声、缺乏同源证据的条目。"
+    },
+    "JevRerankMaxChoices": {
+      "type": "integer",
+      "description": "单次 Jev 精排最大候选数，硬上限 255；实际受 2×K 窗口限制。",
+      "default": 255
+    },
+    "JevRerankMaxDocumentChars": {
+      "type": "integer",
+      "description": "每个候选发送给 Jev 的最大字符数。",
+      "default": 3000
+    },
+    "JevDecisionMode": {
+      "type": "string",
+      "description": "Jev 决策模式：off=关闭；rerank=仅对融合候选精排；route=先决策轨道再精排；full=轨道决策+候选精排+同源一致性裁决。",
+      "default": "route"
+    }
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "sync",
+        "description": "检测上游 CLDF 数据源指纹并按需增量/全量编译 SQLite 索引库，完成蓝绿无缝切换。\n参数:\n- force (布尔, 可选, 默认false): 是否强制重建索引。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」sync「末」,\nforce:「始」false「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」sync「末」,\\nforce:「始」false「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "concept_lookup",
+        "description": "跨语系/语族检索指定概念（如 water/fire/sun）在全球数千种语言中的词形、音标切分与同源标识。\n参数:\n- concept (字符串, 必需): 概念英语关键词或 Concepticon Gloss，如 water。\n- family (字符串, 可选): 限定语系，如 Indo-European / Sino-Tibetan / Austronesian。\n- limit (数字, 可选, 默认50): 返回条数限制。\n- jev (布尔/数字/字符串, 可选, 默认false): 启用 Jev 精排。true=纯精排；rrf/rrf0.7/0~1数字=与原排名做 RRF；与 rerank 同时启用时仅执行 Jev。\n- rerank (布尔/数字/字符串, 可选, 默认false): 传统 Rerank，语义同 LightMemo。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」concept_lookup「末」,\nconcept:「始」water「末」,\nfamily:「始」Indo-European「末」,\njev:「始」rrf0.7「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」concept_lookup「末」,\\nconcept:「始」water「末」,\\nfamily:「始」Indo-European「末」,\\njev:「始」rrf0.7「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "cognate_trace",
+        "description": "追溯特定词形或值在全球语言库中的同源分布与音变对应。\n参数:\n- word (字符串, 必需): 待查询的词形表达。\n- limit (数字, 可选, 默认50): 返回上限。\n- jev (布尔/数字/字符串, 可选, 默认false): 启用 Jev 精排，语义同 concept_lookup。\n- rerank (布尔/数字/字符串, 可选, 默认false): 传统 Rerank。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」cognate_trace「末」,\nword:「始」wasser「末」,\njev:「始」true「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」cognate_trace「末」,\\nword:「始」wasser「末」,\\njev:「始」true「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "lang_profile",
+        "description": "查询特定语言或变体的语系归属、Glottocode、坐标以及总词元量。\n参数:\n- code (字符串, 必需): 语言名称、ISO编码或 Glottocode。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」lang_profile「末」,\ncode:「始」deu「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」lang_profile「末」,\\ncode:「始」deu「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "status",
+        "description": "查看当前索引库就绪状态、活跃版本指纹与上游挂载路径。\n无参数。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」status「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」status「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "JevRoute",
+        "description": "LexibankOperator 功能决策精排专用入口：先由 Jev 决策检索轨道（concept/form/cognate/phoneme/family），再对融合候选做语言学价值精排。\n参数:\n- query (字符串, 必需): 自然语言查询，例如「日耳曼语系里 water 的同源词音变路径」。\n- mode (字符串, 可选, 默认route): route=仅决策轨道；full=轨道决策+候选精排+同源一致性裁决。\n- k (数字, 可选, 默认10): 每轨候选窗口。\n- family (字符串, 可选): 限定语系。\n- limit (数字, 可选, 默认50): 最终返回条数。\n- jev (布尔/数字/字符串, 可选, 默认true): 本命令默认启用 Jev。\n- compare (布尔, 可选, 默认false): 输出各轨道对照表与 Top-K 重合率。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」LexibankOperator「末」,\ncommand:「始」JevRoute「末」,\nquery:「始」日耳曼语系里 water 的同源词音变路径「末」,\nmode:「始」full「末」,\nk:「始」10「末」,\nlimit:「始」50「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」JevRoute「末」,\\nquery:「始」日耳曼语系里 water 的同源词音变路径「末」,\\nmode:「始」full「末」,\\nk:「始」10「末」,\\nlimit:「始」50「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  }
+}

@@ -1,0 +1,7 @@
+{
+  "name": "penpot-a-bridge",
+  "version": "1.0.0",
+  "description": "VCP <-> Penpot MCP 原生内接桥。仅用 Node 内置模块。",
+  "main": "PenpotBridge.js",
+  "private": true
+}

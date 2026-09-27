@@ -1,0 +1,92 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "PenpotBridge",
+  "version": "1.0.0",
+  "displayName": "Penpot 设计桥接器",
+  "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
+  "author": "ATRI&Lucifer-sakura",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "command": "node PenpotBridge.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 70000
+  },
+  "configSchema": {
+    "PENPOT_MCP_URL": {
+      "type": "string",
+      "description": "Penpot MCP 服务的 Streamable HTTP 端点。",
+      "default": "http://[::1]:4401/mcp"
+    },
+    "PENPOT_MCP_USER_TOKEN": {
+      "type": "string",
+      "description": "多用户模式下用于识别当前用户的 Token，通过 URL query 传递。",
+      "default": ""
+    },
+    "REQUEST_TIMEOUT_MS": {
+      "type": "integer",
+      "description": "单次 MCP 请求的超时时间（毫秒）。",
+      "default": 60000
+    },
+    "MCP_PROTOCOL_VERSION": {
+      "type": "string",
+      "description": "MCP 协议版本，握手时使用。",
+      "default": "2025-06-18"
+    },
+    "DebugMode": {
+      "type": "boolean",
+      "description": "开启后输出调试日志。",
+      "default": false
+    }
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "overview",
+        "description": "读 Penpot 工具与 API 的高层使用说明。一次性，读过勿重复调用。无参数。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」overview「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」overview「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "api_info",
+        "description": "查 Penpot API 类型文档。\n参数:\n- type (字符串, 必需): Penpot API 类型名，如 Penpot / Shape / Board。\n- member (字符串, 可选): 具体成员名。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」api_info「末」,\ntype:「始」Shape「末」,\nmember:「始」resize「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」api_info「末」,\\ntype:「始」Shape「末」,\\nmember:「始」resize「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "list_pages",
+        "description": "列出当前 Penpot 文件所有页面及顶层结构。无参数。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」list_pages「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」list_pages「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "get_selection",
+        "description": "读取当前在 Penpot 中选中的图形。无参数。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」get_selection「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」get_selection「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "get_page_tree",
+        "description": "读取当前页面的浅层结构树（深度 3）。无参数。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」get_page_tree「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」get_page_tree「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "create_rect",
+        "description": "创建矩形。\n参数:\n- x (数值, 可选): 横坐标。\n- y (数值, 可选): 纵坐标。\n- width (数值, 可选, 默认100): 宽度。\n- height (数值, 可选, 默认100): 高度。\n- name (字符串, 可选): 图形名称。\n- fill (字符串, 可选): 填充色，如 #4A90E2。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」create_rect「末」,\nx:「始」100「末」,\ny:「始」100「末」,\nwidth:「始」200「末」,\nheight:「始」80「末」,\nname:「始」按钮底板「末」,\nfill:「始」#4A90E2「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」create_rect「末」,\\nx:「始」100「末」,\\ny:「始」100「末」,\\nwidth:「始」200「末」,\\nheight:「始」80「末」,\\nname:「始」按钮底板「末」,\\nfill:「始」#4A90E2「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "create_text",
+        "description": "创建文本。\n参数:\n- text (字符串, 必需): 文本内容。\n- x (数值, 可选): 横坐标。\n- y (数值, 可选): 纵坐标。\n- fontSize (字符串, 可选): 字号。\n- fill (字符串, 可选): 填充色。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」create_text「末」,\ntext:「始」你好 Penpot「末」,\nx:「始」100「末」,\ny:「始」200「末」,\nfontSize:「始」24「末」,\nfill:「始」#333333「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」create_text「末」,\\ntext:「始」你好 Penpot「末」,\\nx:「始」100「末」,\\ny:「始」200「末」,\\nfontSize:「始」24「末」,\\nfill:「始」#333333「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "export",
+        "description": "导出图形。\n参数:\n- shapeId (字符串, 可选): 目标图形 ID，默认当前选中。\n- format (字符串, 可选): png / svg / pdf。\n- scale (数值, 可选): 缩放比例。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」export「末」,\nformat:「始」png「末」,\nscale:「始」2「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」export「末」,\\nformat:「始」png「末」,\\nscale:「始」2「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      },
+      {
+        "commandIdentifier": "exec",
+        "description": "逃生舱，执行任意 JS。\n参数:\n- code (字符串, 必需): 在 Penpot 插件上下文运行的代码，可用 penpot / penpotUtils / storage 对象；想象成函数体，return 即返回值。\n\n调用示例:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」PenpotBridge「末」,\ncommand:「始」exec「末」,\ncode:「始」const b = penpot.createBoard(); b.name = '对策板'; b.resize(400, 300); return { id: b.id };「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」PenpotBridge「末」,\\ncommand:「始」exec「末」,\\ncode:「始」const b = penpot.createBoard(); b.name = '对策板'; b.resize(400, 300); return { id: b.id };「末」\\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  }
+}
