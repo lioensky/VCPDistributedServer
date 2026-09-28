@@ -1,5 +1,22 @@
+# Python
 __pycache__/
 *.pyc
+
+# Personal config & secrets
 config.env
-*.log
+
+# Local runtime artifacts (never distribute)
+market_data/
+patches/
+harvest_state.json
+probe_raw.json
+trades_annotations.json
 guanlan.lock
+
+# Backups & logs
+main.py.bak_*
+trades.json.bak_*
+*.log
+
+# Note: positions/trades/account/watchlist/judgments/results
+# ship as EMPTY templates in repo (personal data never committed)
