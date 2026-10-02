@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-16T02:59:54.486024+00:00",
+  "generatedAt": "2026-10-02T12:51:46.383744+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -226,6 +226,16 @@
       "icon": "extension",
       "category": "tool",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ObsidianBridge/ObsidianBridge.zip"
+    },
+    {
+      "name": "PenpotBridge",
+      "displayName": "Penpot 设计桥接器",
+      "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
+      "version": "1.0.0",
+      "author": "ATRI&Lucifer-sakura",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PenpotBridge/PenpotBridge.zip"
     },
     {
       "name": "PubMedSearch",
@@ -457,6 +467,16 @@
       "icon": "extension",
       "category": "tool",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitSearch/GitSearch.zip"
+    },
+    {
+      "name": "LexibankOperator",
+      "displayName": "全球词源追溯引擎 (LexibankOperator)",
+      "description": "基于 MPI-EVA Lexibank² (CLDF规范) 与依赖倒置架构的全球跨语系词源追溯与音系分析引擎。支持 Jev 功能决策精排、上游热更新与蓝绿无缝热切。",
+      "version": "1.1.0",
+      "author": "ATRI",
+      "icon": "extension",
+      "category": "service",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/LexibankOperator/LexibankOperator.zip"
     },
     {
       "name": "XiaohongshuFetch",

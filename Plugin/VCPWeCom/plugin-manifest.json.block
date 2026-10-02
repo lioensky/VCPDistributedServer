@@ -18,7 +18,7 @@
     "invocationCommands": [
       {
         "commandIdentifier": "WeComSend",
-        "description": "[VCPWeCom 通讯工具] 向企微用户或群聊主动推送文本/Markdown 消息。\n参数:\n- command: 固定为 WeComSend。\n- target: 必填，企微 userid（单聊）或 chatid（群聊）。\n- content: 必填，消息内容，支持 Markdown。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」VCPWeCom「末」,\ncommand:「始」WeComSend「末」,\ntarget:「始」用户userid或群chatid「末」,\ncontent:「始」消息内容，支持Markdown「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "description": "[VCPWeCom 通讯工具] 向企微用户或群聊主动推送文本/Markdown 消息。\n参数:\n- command: 固定为 WeComSend。\n- target: 必填，企微 userid（单聊）或 chatid（群聊）。\n- content: 必填，消息内容，支持 Markdown。\n调用格式:\n",
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」VCPWeCom「末」,\ncommand:「始」WeComSend「末」,\ntarget:「始」zhangsan「末」,\ncontent:「始」这是一条来自 VCP 的主动推送消息。「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ],
@@ -30,19 +30,61 @@
     ]
   },
   "configSchema": {
-    "WeComBotId": { "type": "string", "description": "企业微信后台机器人 ID", "required": true },
-    "WeComBotSecret": { "type": "string", "description": "企业微信后台机器人 Secret", "required": true },
-    "WeComBindAgent": { "type": "string", "description": "收到消息后唤醒的 AgentAssistant Agent 名称（chineseName，精确匹配）", "required": true },
-    "WeComMaxReconnect": { "type": "integer", "description": "WebSocket 最大重连次数，-1 表示无限重连，默认 -1" },
-    "WeComHeartbeatInterval": { "type": "integer", "description": "心跳间隔毫秒，默认 30000" },
-    "WeComStreamReply": { "type": "boolean", "description": "是否启用两段式流式回复（先发提示再发全文），默认 true" },
-    "WeComStreamHint": { "type": "string", "description": "流式回复中间提示语，默认 '正在思考中…'" },
-    "WeComSessionPrefix": { "type": "string", "description": "会话 ID 前缀，默认 'wecom'" },
-    "WeComInjectTools": { "type": "string", "description": "唤醒 Agent 时临时注入的工具组，逗号分隔，如 'VCPWeCom'，留空则不注入" },
-    "WeComAllowedUsers": { "type": "string", "description": "允许触发 agent 的 userid 白名单，逗号分隔，留空则不限制" },
-    "WeComAgentTimeoutMs": { "type": "integer", "description": "唤醒 agent 的超时毫秒，超时回退提示语，默认 120000（2 分钟）" },
-    "WeComWelcomeText": { "type": "string", "description": "用户进入会话时的欢迎语，留空则不发送欢迎语" },
-    "DebugMode": { "type": "boolean", "description": "调试模式，输出详细日志" }
+    "WeComBotId": {
+      "type": "string",
+      "description": "企业微信后台机器人 ID",
+      "required": true
+    },
+    "WeComBotSecret": {
+      "type": "string",
+      "description": "企业微信后台机器人 Secret",
+      "required": true
+    },
+    "WeComBindAgent": {
+      "type": "string",
+      "description": "收到消息后唤醒的 AgentAssistant Agent 名称（chineseName，精确匹配）",
+      "required": true
+    },
+    "WeComMaxReconnect": {
+      "type": "integer",
+      "description": "WebSocket 最大重连次数，-1 表示无限重连，默认 -1"
+    },
+    "WeComHeartbeatInterval": {
+      "type": "integer",
+      "description": "心跳间隔毫秒，默认 30000"
+    },
+    "WeComStreamReply": {
+      "type": "boolean",
+      "description": "是否启用两段式流式回复（先发提示再发全文），默认 true"
+    },
+    "WeComStreamHint": {
+      "type": "string",
+      "description": "流式回复中间提示语，默认 '正在思考中…'"
+    },
+    "WeComSessionPrefix": {
+      "type": "string",
+      "description": "会话 ID 前缀，默认 'wecom'"
+    },
+    "WeComInjectTools": {
+      "type": "string",
+      "description": "唤醒 Agent 时临时注入的工具组，逗号分隔，如 'VCPWeCom'，留空则不注入"
+    },
+    "WeComAllowedUsers": {
+      "type": "string",
+      "description": "允许触发 agent 的 userid 白名单，逗号分隔，留空则不限制"
+    },
+    "WeComAgentTimeoutMs": {
+      "type": "integer",
+      "description": "唤醒 agent 的超时毫秒，超时回退提示语，默认 120000（2 分钟）"
+    },
+    "WeComWelcomeText": {
+      "type": "string",
+      "description": "用户进入会话时的欢迎语，留空则不发送欢迎语"
+    },
+    "DebugMode": {
+      "type": "boolean",
+      "description": "调试模式，输出详细日志"
+    }
   },
   "configSchemaDescriptions": {
     "WeComBotId": "企业微信智能机器人后台获取的 botId",

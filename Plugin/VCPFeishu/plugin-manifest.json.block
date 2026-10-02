@@ -18,7 +18,7 @@
     "invocationCommands": [
       {
         "commandIdentifier": "FeishuSend",
-        "description": "[VCPFeishu 通讯工具] 向飞书用户或群聊主动推送文本消息。\n参数:\n- command: 固定为 FeishuSend。\n- content: 必填，消息内容。\n- target/chat_id/open_id/receive_id: 可选，飞书 open_id 或 chat_id。\n- receive_id_type: 可选，open_id 或 chat_id；未填写时按 target 前缀自动推断。\n- session/topic_id: 可选，用 VCPFeishu 创建的话题会话定位飞书目标。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」VCPFeishu「末」,\ncommand:「始」FeishuSend「末」,\nsession:「始」feishu_oc_xxxxx「末」,\ncontent:「始」消息内容「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "description": "[VCPFeishu 通讯工具] 向飞书用户或群聊主动推送文本消息。\n参数:\n- command: 固定为 FeishuSend。\n- content: 必填，消息内容。\n- target/chat_id/open_id/receive_id: 可选，飞书 open_id 或 chat_id。\n- receive_id_type: 可选，open_id 或 chat_id；未填写时按 target 前缀自动推断。\n- session/topic_id: 可选，用 VCPFeishu 创建的话题会话定位飞书目标。\n调用格式:\n",
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」VCPFeishu「末」,\ncommand:「始」FeishuSend「末」,\nsession:「始」feishu_oc_xxxxx「末」,\ncontent:「始」这是一条来自 VCP 的主动推送消息。「末」\n<<<[END_TOOL_REQUEST]>>>"
       },
       {

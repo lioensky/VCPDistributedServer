@@ -40,7 +40,7 @@
     "invocationCommands": [
       {
         "commandIdentifier": "TomatoNovel",
-        "description": "调用此工具管理番茄小说，支持搜书、下载全本、下载简介和大纲目录。\n参数:\n- action (字符串, 必需): 细分功能类型。可选：'search' (搜书), 'download' (精准全本下载), 'download_intro' (仅下载大纲)。\n- query (字符串, 条件必需): 搜书时必需，表示搜索关键词（主角/分类/Tags/设定等）。\n- book_id (字符串, 条件必需): 下载或提取大纲时必需，表示书籍的唯一 ID。\n调用格式:\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」TomatoNovel「末」,\naction:「始」search「末」,\nquery:「始」穿成哈利邻居 程序员转生「末」\n<<<[END_TOOL_REQUEST]>>>",
+        "description": "调用此工具管理番茄小说，支持搜书、下载全本、下载简介和大纲目录。\n参数:\n- action (字符串, 必需): 细分功能类型。可选：'search' (搜书), 'download' (精准全本下载), 'download_intro' (仅下载大纲)。\n- query (字符串, 条件必需): 搜书时必需，表示搜索关键词（主角/分类/Tags/设定等）。\n- book_id (字符串, 条件必需): 下载或提取大纲时必需，表示书籍的唯一 ID。\n调用格式:\n",
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」TomatoNovel「末」,\naction:「始」download_intro「末」,\nbook_id:「始」7580018670118652952「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]

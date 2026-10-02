@@ -28,7 +28,8 @@
     "invocationCommands": [
       {
         "commandIdentifier": "SearchBookmarks",
-        "description": "搜索书签。参数:\\n- query (字符串, 必需)\\n- limit (数字, 可选, 默认 10)\\n- nextCursor (字符串, 可选)\\n调用格式 (VCP TOOL_REQUEST 块):\\n<<<[TOOL_REQUEST]>>>\\nmaid:「始」Agent「末」,\\ntool_name:「始」KarakeepSearch「末」,\\nquery:「始」machine learning is:fav「末」,\\nlimit:「始」5「末」\\n<<<[END_TOOL_REQUEST]>>>\\n插件返回 JSON: { status: \"success\", result: { content: [...], nextCursor: \"...\" } } 或 { status: \"error\", code: \"...\", error: \"...\" }。"
+        "description": "搜索书签。参数:\\n- query (字符串, 必需)\\n- limit (数字, 可选, 默认 10)\\n- nextCursor (字符串, 可选)\\n调用格式 (VCP TOOL_REQUEST 块):\\n\\n插件返回 JSON: { status: \"success\", result: { content: [...], nextCursor: \"...\" } } 或 { status: \"error\", code: \"...\", error: \"...\" }。",
+        "example": "<<<[TOOL_REQUEST]>>>\\nmaid:「始」Agent「末」,\\ntool_name:「始」KarakeepSearch「末」,\\nquery:「始」machine learning is:fav「末」,\\nlimit:「始」5「末」\\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
   }
