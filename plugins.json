@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-09-16T02:59:54.486024+00:00",
+  "generatedAt": "2026-09-28T12:11:23.688765+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -226,6 +226,16 @@
       "icon": "extension",
       "category": "tool",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ObsidianBridge/ObsidianBridge.zip"
+    },
+    {
+      "name": "PenpotBridge",
+      "displayName": "Penpot 设计桥接器",
+      "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
+      "version": "1.0.0",
+      "author": "ATRI&Lucifer-sakura",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PenpotBridge/PenpotBridge.zip"
     },
     {
       "name": "PubMedSearch",
@@ -459,6 +469,16 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitSearch/GitSearch.zip"
     },
     {
+      "name": "LexibankOperator",
+      "displayName": "全球词源追溯引擎 (LexibankOperator)",
+      "description": "基于 MPI-EVA Lexibank² (CLDF规范) 与依赖倒置架构的全球跨语系词源追溯与音系分析引擎。支持 Jev 功能决策精排、上游热更新与蓝绿无缝热切。",
+      "version": "1.1.0",
+      "author": "ATRI",
+      "icon": "extension",
+      "category": "service",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/LexibankOperator/LexibankOperator.zip"
+    },
+    {
       "name": "XiaohongshuFetch",
       "displayName": "小红书爬虫",
       "description": "用于抓取小红书图文/视频笔记内容的专属爬虫。",
@@ -581,8 +601,8 @@
     {
       "name": "GuanLan",
       "displayName": "观澜-A股数据引擎",
-      "description": "A股智能数据引擎，38+专业命令。支持双数据源容灾(Tushare+AKShare)、真实费率引擎(佣金/印花税/过户费)、filelock跨进程并发安全。核心模块：实时行情与技术指标(MA/MACD/RSI/布林带/KDJ等)、基本面数据(PE/PB/ROE/市值)、资金流向分析、板块排名与轮动追踪、持仓管理与交易记录(含胜率统计)、组合压力测试(5场景)、选股框架v4.0(五风格组分路由+三问+禁买清单+版本戳)、策略回测引擎(4种策略)、事件型异动扫描(龙虎榜/大宗交易/解禁/业绩预告)、舆情分析(5维度)、盘中异动扫描与持仓监控、盘后日报。作者：观澜 & 冬竹子（翔）",
-      "version": "4.0.0",
+      "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
+      "version": "4.5.0",
       "author": "观澜 & 冬竹子（翔）",
       "icon": "extension",
       "category": "tool",

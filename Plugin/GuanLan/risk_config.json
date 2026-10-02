@@ -1,0 +1,13 @@
+{
+  "_meta": "GuanLan v4.3 risk stack config (22c) | OVERRIDE layer only - code-embedded defaults are the floor, this file tunes them; if this file is missing/corrupt, gates fall back to embedded defaults, never silently disappear | semantics: single_trade_risk = (entry-stop_loss)*shares vs pct of total_capital; daily circuit breaker measured on realized losses vs day-open total_capital; consecutive_loss counts STOP-LOSS exits (closed trades with negative pnl), floating drawdown does not count; cooldown = close-only (position_close allowed, position_add rejected); restart = next trading day AND review note in diary, both required | sizing: atr mode until ledger has 100 matched judgments, then kelly mode eligible | params sourced from 瑶序 2026-08-27 量化生存体系调研 + Nova 2026-08-27 测量有效性调研 | AUTHORITIES (翔 rule 2026-09-03: 配置文件里每个数都要能回答谁说的): single_trade_risk_pct 2% <- Van Tharp 通向财务自由 1998 (原型 Schwager Market Wizards 1989 Larry Hite 1%规则) | daily_circuit_breaker_pct 3% <- Prop Trading 行业准入硬标准 3-5% (The5ers等), 取下沿最保守端 | consecutive_loss_halt 3 <- 行业共识 2-3 次, Barber & Odean 2000 实证: 第3次连亏后决策降级, 亏损后加频散户年绩效低3.8% | atr_stop_multiplier 2.0 <- Wilder New Concepts in Technical Trading Systems 1978, 波段区 2-3x 取下沿 | 口径披露: 名义3%为收盘结算口径浮亏不计, 约等于行业实时含浮亏口径(3-5%)的偏松版 - 架构原因: 闸管记账不管真单, 真单在翔手里; 补救: 日报加盘中组合浮亏超2%提示行(提醒制非熔断制, 人终裁架构) | 2%哲学: 2%是上限不是目标(机构日内高杠杆用0.5-1%); A股一手制下2%是现实下限(限1%=142元预算, 紫金移损后230元敞口连100股开不了) | 值域夹紧(代码执行): pct硬上限10%超限拒收保默认, 超3%推荐带加载留日志(大额放宽风控=行为事件应留痕, 观澜rule) | HONORED KEYS披露(Nova r4 C2): 当前代码生效仅4键 single_trade_risk_pct/daily_circuit_breaker_pct/consecutive_loss_halt/min_lot_threshold, 其余6键为22c未建成闸的预留座位改之当前无效 | 数值终审 2026-09-03: 四参数零修改(观澜裁定数值+翔溯源质询后确认) | design 瑶序 2026-09-03, values 观澜 2026-09-03, approved by 翔 (22c开工令+溯源质询)",
+  "single_trade_risk_pct": 0.02,
+  "daily_circuit_breaker_pct": 0.03,
+  "consecutive_loss_halt": 3,
+  "cooldown_policy": "close_only",
+  "restart_conditions": ["next_trading_day", "diary_review_note"],
+  "min_lot_threshold": 0.5,
+  "sizing_mode": "atr",
+  "sizing_switch_judgment_count": 100,
+  "atr_stop_multiplier": 2.0,
+  "dual_limit_stress_test_flag": true
+}
