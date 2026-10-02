@@ -1,8 +1,8 @@
 {
   "name": "GuanLan",
   "displayName": "观澜-A股数据引擎",
-  "version": "4.0.0",
-  "description": "A股智能数据引擎，38+专业命令。支持双数据源容灾(Tushare+AKShare)、真实费率引擎(佣金/印花税/过户费)、filelock跨进程并发安全。核心模块：实时行情与技术指标(MA/MACD/RSI/布林带/KDJ等)、基本面数据(PE/PB/ROE/市值)、资金流向分析、板块排名与轮动追踪、持仓管理与交易记录(含胜率统计)、组合压力测试(5场景)、选股框架v4.0(五风格组分路由+三问+禁买清单+版本戳)、策略回测引擎(4种策略)、事件型异动扫描(龙虎榜/大宗交易/解禁/业绩预告)、舆情分析(5维度)、盘中异动扫描与持仓监控、盘后日报。作者：观澜 & 冬竹子（翔）",
+  "version": "4.5.0",
+  "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
   "author": "观澜 & 冬竹子（翔）",
   "pluginType": "synchronous",
   "entryPoint": {
@@ -10,6 +10,50 @@
   },
   "communication": {
     "protocol": "stdio",
-    "timeout": 120000
+    "timeout": 300000
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "harvest_judgments",
+        "description": "[GuanLan 判断账本] 收割日记中的JUDGE判断块入judgments.jsonl账本。幂等: mtime水位线+内容指纹去重, 重复调用零副作用。返回五格收割报告。外层status=success仅代表子进程跑完, 还需看result.exit_code。无参数。",
+        "example": "tool_name: GuanLan, command: harvest_judgments (无参数)"
+      },
+      {
+        "commandIdentifier": "funnel_daily",
+        "description": "[GuanLan 全市场漏斗] V4.3.1异步化: 产物在→缓存秒回完整报告(source:cache); 产物不在→后台起跑+秒回running(约3分钟); 运行中→进度; 僵尸>10分钟→自愈重跑。产物文件是唯一事实源, 回执只报状态。params.date主入口(如date=20260910), command暗门兼容旧约(YYYYMMDD)。挂日报15:10自动跑。",
+        "example": "tool_name: GuanLan, command: funnel_daily (可选: params传date=YYYYMMDD补跑)"
+      },
+      {
+        "commandIdentifier": "position_size",
+        "description": "[GuanLan 风控栈] ATR仓位计算器: 2%风险预算x市场系数(多头1.0/缠绕0.7/空头0.5, V4.2.1)÷(ATRx2.0)算建议股数, 一手取整, 四态verdict(OK/SKIP_SIGNAL/DOWNSIZE_CASH/SKIP_CASH)。建议仓位, 终裁在用户。参数: symbol必填; entry可选(缺省最新收盘)。",
+        "example": "tool_name: GuanLan, command: position_size, symbol: 601899"
+      },
+      {
+        "commandIdentifier": "update_trailing_stops",
+        "description": "[GuanLan 风控栈] V4.2吊灯止损巡检: 锚定持仓期最高价HWM(首次K线回溯回填, positions.json含hwm字段), 回撤分层倍数(<1xATR用3.0/1-2x用2.5/>2x用2.0, LeBeau吊灯A股宽版), 棘轮只上移。挂日报15:10自动执行, 亦可手动。无参数。",
+        "example": "tool_name: GuanLan, command: update_trailing_stops (无参数)"
+      },
+      {
+        "commandIdentifier": "risk_halt_reset",
+        "description": "[GuanLan 风控栈] 连亏停手人工解除: 必须附evidence(复盘结论/日记指针), 解除仅对到指定日为止的连亏有效, 之后新亏损重新计数。设计为supervised使用(用户在场), 不进日报自动任务白名单。参数走params对象: cleared_until必填(YYYY-MM-DD); reset_by必填; evidence必填(无凭据拒绝解除)。",
+        "example": "tool_name: GuanLan, command: risk_halt_reset, params: {cleared_until: 2026-09-10, reset_by: 翔, evidence: 复盘结论}"
+      },
+      {
+        "description": "[GuanLan 风控栈] 弱市豁免三证明单票查询: 板块庇护(申万一级动量uptrend/accelerating)+个股独立(20日涨幅跑赢沪深300+均线多头)+T+1资金续流(近2日主力合计为正且最新不流出)。三证明全过=空头市场可半预算试探。rotation数据滞后约2交易日, 结果带时点性。参数: symbol必填(六位代码)。batch_screen与闸内共用此函数(单一事实源)。",
+        "commandIdentifier": "exemption_check",
+        "example": "tool_name: GuanLan, command: exemption_check, symbol: 601899"
+      },
+      {
+        "description": "[GuanLan 决策层] 批量三问: 循环调用stock_screen_v3本体(单一事实源), 输出摘要表+仅PASS股全字段明细。pacing 0.35s/票, 单票失败不阻塞, MAX_BATCH=30硬编码。P5哨兵: flow全灭或错误过半时data_quality警告。参数(推荐JSON形态, 参数须放params对象内): symbols必填(六位代码数组或逗号串, 如[601899,000807]); with_flow默认true; with_exemption默认false(rotation滞后2交易日, 弱市场景慎开)。k=v路径限制(M13修正2026-09-13): 多票须引号包裹, 裸逗号会被解析器拒绝; 布尔参数k=v传法失效, 必须JSON。#27三方会审+Nova r12三连实测产物。",
+        "commandIdentifier": "batch_screen",
+        "example": "tool_name: GuanLan, command: batch_screen, params: {symbols: [601899, 000807]}"
+      },
+      {
+        "commandIdentifier": "settle_results",
+        "description": "[GuanLan 校准层] 到期判断自动结算: 扫judgments账本找time_window_end<=今日且未结算的判断, 拉判断日与窗口末日收盘价(本地kline库优先), 按口径结算(actual_direction含flat带±3.5%/涨跌幅/止损触发语义scan_stop_hit)写入results.jsonl。幂等(已结算跳过), 挂日报步骤2.85每日执行, 账本从此日清。无参数(command可选传日期补跑)。",
+        "example": "tool_name: GuanLan, command: settle_results (无参数)"
+      }
+    ]
   }
 }

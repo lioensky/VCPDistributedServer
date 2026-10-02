@@ -1,8 +1,8 @@
 # VCP 观澜专属投研工具箱能力收纳
 这里收纳了观澜专属的A股数据引擎和深度投研系统的调用说明。
 
-## 1. A股数据引擎 (GuanLan v3.3.0)
-观澜通过 GuanLan 插件调用 A股数据引擎（v3.3.0），支持的查询类型：
+## 1. A股数据引擎 (GuanLan v4.5.0 | 框架V4.1 | 风控V4.2.1 | 豁免V4.2.2(M17) | 批量决策V4.5)
+观澜通过 GuanLan 插件调用 A股数据引擎（引擎v4.5.0 + 选股框架V4.1[fv:571a2645] + 风控栈V4.2.1 + 豁免通道V4.2.2 + 批量决策V4.5 + 异步化M15，2026-09-28版本对齐同步），支持的查询类型（对话与日报统一使用「命令（中文名）」双语格式）：
 
 ### 快速查询
 - `realtime_quote`：个股实时行情
@@ -52,15 +52,15 @@
   - **翔问"我的持仓"或"账户情况"时，直接用这个命令**
 
 ### 盯盘扫描（v3.3.0+）
-- `scan_anomalies`：7类异动检测 + 持仓监控（止损/目标触发提醒）
+- `scan_anomalies`（盘中异动雷达）：7类异动检测 + 持仓监控（止损/目标触发提醒）+ V4.2 T+1资金续流验证（昨主力净流入≥2000万今回吐≥50%→快闪嫌疑high；今日续流→续流确认medium）+ V4.2 T+1资金续流验证（昨主力净流入≥2000万今回吐≥50%→快闪嫌疑high；今日续流→续流确认medium）
   - 自动读取watchlist + positions，返回severity分级结果（normal/medium/high/critical）
   - 检测类型：涨跌停逼近、放量突破/跌破MA20/MA60、主力资金异动、独立走势、高换手率、量价背离
 - `daily_report`：盘后日报，自选股当日表现+次日关注要点
 
 ### 选股框架（v4.0.0+）
-- `market_check`：大盘环境判断（沪深300趋势：多头/空头/缠绕 → 对应操作建议）
+- `market_check`（开盘天气）：大盘环境判断（沪深300趋势：多头/空头/缠绕 → 对应操作建议；V4.2.1起附带risk_factor系数：多头1.0/缠绕0.7/空头0.5，大盘定下注大小不定能不能下注）
 - `stock_screen`：五风格组分路由选股 + 三问 + 禁买清单（参数：`symbol`，单只个股）
-  - **禁买清单（任一触发即REJECT）**：市值<100亿 / RSI>70 / 价格>布林上轨 / 均线空头排列(MA5<MA20<MA60)
+  - **禁买清单（任一触发即REJECT）**：市值<100亿 / RSI6>65（V4.1校准：6日RSI配短周期阈值65，原>70已收紧）/ 价格>布林上轨 / 均线空头排列(MA5<MA20<MA60)
   - **行业映射**：110个Tushare细分行业 → 5个风格组（A周期/B金融/C成长/D消费/E稳定），未命中默认D组
   - **Q1 趋势向上**：MA5>MA20 且 MACD柱>0
   - **Q2 能赚钱（按风格分化）**：周期ROE≥8% / 金融≥10% / 成长≥8%且营收增速≥15% / 消费≥12% / 稳定≥8%
@@ -104,6 +104,30 @@
   - 计算5日/10日/20日累计涨跌幅
   - 6类信号：accelerating(加速流入) / decelerating(加速流出) / uptrend(持续上行) / downtrend(持续下行) / rebounding(超跌反弹) / pulling_back(高位回调)
   - 返回Top5强势/弱势 + 全行业明细
+
+### 市场温度计与增强（v3.2补录，2026-09-06寻回）
+- `market_temperature`：市场情绪综合指标（涨跌停+涨跌比+换手率+成交额→0-100评分）
+- `trade_stats_monthly`：月度复盘（按月/胜率/盈亏比统计）
+- `position_update`：更新活跃持仓风控参数（symbol + stop_loss + target），秒级更新不走文件修改
+  - ⚠ 风控披露：此命令不过四道闸（闸只挂position_add），用于已有持仓调参；新开仓必须走position_add过闸
+
+### 风控栈五闸（V4.1/V4.2）
+- position_add 现带四道Pre-trade闸，触闸返回rejected+完整计算过程（日报可直接引用）：
+  - Rule 1 无有效止损拒单（止损是风险预算的分母）
+  - Rule 3 连亏3笔停手（只平不建；盈利平仓自动清零，人工解除须evidence）
+  - Rule 4 日熔断3%（当日已实现亏损达标即拒，次日自愈）
+  - Rule 2 单笔风险(entry−stop)×shares ≤ 2%×总资本（超预算拒单）
+  - Rule 5 月度风险总闸：活跃持仓敞口+新仓风险 ≤ 6%×总资本（V4.1新增，2/6法则下半句；浮盈锁利仓止损≥成本风险归零不占预算）
+- `position_size`：ATR仓位计算器（symbol必填，entry可选）——按2%预算÷(ATR×2.0)算建议股数，四态verdict（OK/SKIP_SIGNAL不足半手舍弃/DOWNSIZE_CASH按资金降仓/SKIP_CASH）。建议仓位，终裁在翔
+- `update_trailing_stops`：V4.2吊灯止损巡检——锚定持仓期最高价HWM（首次K线回溯回填），回撤分层倍数（<1×ATR→3.0 / 1-2×→2.5 / >2×→2.0，LeBeau吊灯A股宽版），棘轮只上移，positions.json含hwm字段（挂日报21:05自动跑，亦可手动）
+- `risk_halt_reset`：连亏停手人工解除（params: cleared_until/reset_by/evidence三键，无凭据拒绝解除；supervised专用不进自动任务）
+- `exemption_check`：弱市豁免三证明单票查询（symbol必填）——板块庇护（M17-2026-09-22修订：板块RS排名前1/3且非downtrend——双动量体系，相对强度选板块+绝对下限防垃圾堆冠军，业界对齐IBD RS百分位；旧uptrend/accelerating规则废止）+个股独立（20日涨幅跑赢沪深300+均线多头）+T+1资金续流（近2日主力合计为正且最新不流出），三证明全过=空头市场可半预算试探。rotation滞后约2交易日，结果带时点性。与闸内共用_exemption_check本体（单一事实源，V4.2.1翔批2026-09-10）；batch_screen同源复用（#27-③，2026-09-13）
+- `batch_screen`：批量三问（symbols必填，六位代码数组或逗号串，上限30只/次）——循环调用stock_screen_v3本体，输出摘要表（代码/verdict/一行原因/pe/pb/rsi6/close/flow_2d_sum）+仅PASS股全字段明细。⚠调用形态（M13修正2026-09-13）：推荐JSON（参数放params对象内，如params: {symbols: [601899, 000807]}）；k=v路径多票须引号包裹（symbols="601899,000807"，裸逗号被解析器拒绝），布尔参数k=v传法失效必须JSON。with_flow默认true；with_exemption默认false（弱市场景rotation滞后慎开，显式传true开启）。P5哨兵：flow全灭或错误过半时data_quality警告行。pacing 0.35s/票，单票失败进error不阻塞（#27，三方会审+Nova r12实测修正，A方案同步·5分钟墙）
+
+### 判断账本与每日漏斗（v4.3.0）
+- `harvest_judgments`：收割日记中的〔JUDGE〕判断块入judgments.jsonl账本（幂等：mtime水位线+内容指纹去重，重复调用零副作用）。外层status=success仅代表子进程跑完，还需看result.exit_code。挂日报21:05自动跑
+- `funnel_daily`（每日全市场漏斗→「候选池」）：V4.3.1异步化四路径——产物在→缓存秒回完整报告（source:cache）；产物不在→后台起跑+秒回running(约3分钟)；运行中→进度回报；僵尸标记>10分钟→自动清理重跑。**产物文件是唯一事实源，回执只报状态不报数据**。params.date主入口（如date=20260910），command暗门兼容旧约。挂每日例行自动跑（定时任务）
+- 相关文件：judgments.jsonl（判断账本）/results.jsonl（到期结算，settle_results.py）/ranked_*.json（终池排序）/unlock_report_*.json（解禁对表）——判断日记规范见judgment_spec_v1.md〔JUDGE〕格式
 
 ---
 
@@ -159,3 +183,78 @@ docker exec tradingagents-backend python -c "import json; f=open('/app/data/anal
 - FedWatch 和加密期限结构耗时较长，可能超时
 - 推荐先调用 GetGlobalMacroDashboard 建立总览，再用 FetchMarketData 定向深挖
 
+
+---
+
+## 附：45命令中文名对照表（2026-09-20 settle_results转正第45命令，日常对话统一双语格式）
+
+### 📊 看盘问价
+| 命令 | 中文名 |
+|---|---|
+| realtime_quote | 实时报价 |
+| batch_quotes | 批量报价 |
+| stock_info | 个股档案 |
+| sector_ranking | 行业红黑榜 |
+| sector_rotation | 板块轮动图 |
+| market_temperature | 市场温度计 |
+| market_check | 开盘天气 |
+
+### 🩺 个股体检
+| kline_indicators | K线全指标 |
+| capital_flow | 主力资金流 |
+| full_analysis | 全景体检 |
+
+### 🛒 自选池
+| watchlist_add / remove / show | 加自选 / 删自选 / 看自选清单 |
+
+### 💼 持仓与账本
+| position_add | 建仓（过五道岗） |
+| position_close | 平仓结算 |
+| position_update | 改止损/改目标 |
+| position_show | 看持仓 |
+| position_remove | 删持仓记录 |
+| position_size | 仓位计算器 |
+| trade_history | 交易流水 |
+| trade_stats | 胜率统计 |
+| trade_stats_monthly | 月度对账 |
+| portfolio_summary | 账户总览 |
+| account_set / show | 账户校准 / 查余额 |
+
+### 🛡️ 风控五件套（2026-09-13起）
+| risk_halt_reset | 停手解除 |
+| update_trailing_stops | 吊灯巡检 |
+| stress_test | 极端行情模拟 |
+| exemption_check | 豁免三证明查询 |
+| batch_screen | 批量三问 |
+| settle_results | 到期结算 |
+
+### 🎯 选股与情报
+| stock_screen | 三问选股 |
+| valuation_percentile | 估值分位尺 |
+| scan_anomalies | 盘中异动雷达 |
+| scan_events | 事件雷达 |
+| lhb_detail | 龙虎榜明细 |
+| block_trade | 大宗交易 |
+| share_unlock | 解禁榜 |
+| earnings_forecast | 业绩预告 |
+| sentiment_scan | 舆情透视 |
+| sentiment_rank | 人气榜 |
+
+### 📜 复盘与任务
+| backtest | 历史回测 |
+| daily_report | 盘后日报 |
+| harvest_judgments | 判断收割 |
+| funnel_daily | 每日全市场漏斗（产出「候选池」final_pool_YYYYMMDD.json，~90只） |
+
+### 🔑 Override通道（2026-09-16翔批）
+券商已成交但被风控闸拒单时的合法补登路径（position_add显式参数）：
+- `override_market=true`：跳过Rule 6市场闸（豁免三证明）
+- `override_budget=true`：跳过Rule 2单笔预算超限
+- `override_by`：终裁人（必填）
+- `override_reason`：越闸理由（必填，建议ASCII）
+- 纪律：仅豁免市场判断类闸——Rule 1止损/Rule 3连亏/Rule 4熔断/Rule 5月度总闸不可穿透；OVERRIDE戳自动入reason留档；supervised专用不进自动任务
+- ⚠ 调用形态铁律（M16-2026-09-22，五发实测判例）：position_add的**基础参数必须顶层k=v，override三键必须放params JSON对象**——纯JSON形态基础参数丢失（"缺少必要参数: symbol/cost/shares"）、纯k=v形态override键不可达（L4157：顶层取基础、params取豁免键）。混合形态唯一正确：
+  正确：symbol=600674, cost=15.87, ..., params={"override_market": true, "override_by": "xiang", "override_reason": "manual_discretion_YYYYMMDD"}
+  错误：params={"symbol": "600674", ...}全塞JSON → 基础参数丢失
+  错误：override_market=true顶层k=v → 布尔不达（M13同族：k=v传布尔失效）
+- 同族病灶族谱：batch_screen（M15已修，异步化）/position_add（M16判例在案）/position_close（9/16同招）——"params字符串化后基础参数丢失"待瑶序框架层根治
