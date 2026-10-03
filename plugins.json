@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-02T12:51:46.383744+00:00",
+  "generatedAt": "2026-10-03T10:56:49.403567+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -176,6 +176,16 @@
       "icon": "extension",
       "category": "tool",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/KEGGSearch/KEGGSearch.zip"
+    },
+    {
+      "name": "LdBook",
+      "displayName": "LdBook 电子图书检索器",
+      "description": "面向开放获取与公有领域电子图书的高性能检索与下载工具。采用原生编译自包含架构，支持多镜像全异步竞速检索、智能实体图书去重聚合、多格式探测，以及断点分段下载落盘。",
+      "version": "1.0.0",
+      "author": "VCP",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/LdBook/LdBook.zip"
     },
     {
       "name": "MCPO",
