@@ -491,12 +491,13 @@
     {
       "name": "XiaohongshuFetch",
       "displayName": "小红书爬虫",
-      "description": "用于抓取小红书图文/视频笔记内容的专属爬虫。",
-      "version": "3.0.0",
-      "author": "VCP",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/XiaohongshuFetch/XiaohongshuFetch.zip"
+      "description": "小红书全能生态解析插件。支持图文与视频笔记定向精读、无水印原图批量下载、发现流自主漫游与关键词精准搜索。",
+      "version": "5.0.0",
+      "author": "VCP AI Maid Team",
+      "icon": "travel_explore",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/XiaohongshuFetch/XiaohongshuFetch.zip",
+      "minVcpVersion": "1.0.0"
     },
     {
       "name": "WorkspaceInjector",

@@ -1,10 +1,13 @@
 {
   "manifestVersion": "1.0.0",
   "name": "XiaohongshuFetch",
-  "version": "3.0.0",
+  "version": "5.0.0",
   "displayName": "小红书爬虫",
-  "description": "用于抓取小红书图文/视频笔记内容的专属爬虫。",
-  "author": "VCP",
+  "description": "小红书全能生态解析插件。支持图文与视频笔记定向精读、无水印原图批量下载、发现流自主漫游与关键词精准搜索。",
+  "author": "VCP AI Maid Team",
+  "category": "information-retrieval",
+  "icon": "travel_explore",
+  "minVcpVersion": "1.0.0",
   "pluginType": "synchronous",
   "entryPoint": {
     "type": "python",
@@ -18,7 +21,15 @@
     "invocationCommands": [
       {
         "commandIdentifier": "fetch",
-        "description": "抓取小红书笔记内容。参数: url (字符串, 必需) - 小红书笔记的完整URL链接。"
+        "description": "抓取并精读小红书笔记内容。参数: url (字符串, 必需) - 小红书笔记URL；download_images (布尔值, 可选) - 是否在本地下载无水印原图；download_dir (字符串, 可选) - 自定义下载保存目录。"
+      },
+      {
+        "commandIdentifier": "feed",
+        "description": "漫游小红书发现页推荐流。参数: limit (数字, 可选, 默认15) - 返回的推荐卡片数量。"
+      },
+      {
+        "commandIdentifier": "search",
+        "description": "按关键词搜索小红书笔记库。参数: keyword (字符串, 必需) - 搜索关键词；limit (数字, 可选, 默认10) - 返回笔记数量。"
       }
     ]
   }
