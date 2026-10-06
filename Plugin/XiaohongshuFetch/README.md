@@ -69,60 +69,164 @@ XHS_BROWSER_EXECUTABLE_PATH=D:\Software\chromium\chrome-win32\chrome.exe
 
 ---
 
-## 📖 指令与调用方式
+## 📖 VCP Agent 工具调用规范与使用示例
 
-插件已向 VCP 网关注册三大标准调用接口：
+插件全面拥抱 VCP 原生工具调用契约，支持流式解析、批量参数及多模态渲染输出。
 
 ### 1. 抓取与精读单笔记 (`fetch`)
 
-在聊天中直接发送小红书链接，或通过工具调用：
+用于精读指定笔记，提取全量正文、图文/视频媒体流与互动指标；可选一键落盘下载无水印原图。
 
-```json
-{
-  "command": "fetch",
-  "url": "https://www.xiaohongshu.com/discovery/item/6ac07d3b000000001500a333?xsec_token=...",
-  "download_images": false
-}
+#### 🤖 VCP Agent 调用语法
+
+```text
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」XiaohongshuFetch「末」,
+command:「始」fetch「末」,
+url:「始」https://www.xiaohongshu.com/discovery/item/6ac07d3b000000001500a333?xsec_token=...「末」,
+download_images:「始」true「末」,
+download_dir:「始」D:\VCP\downloads\小红书原图「末」
+<<<[END_TOOL_REQUEST]>>>
 ```
 
 - **参数说明**：
-  - `url` *(string, 必需)*：小红书笔记链接（支持 `explore/<id>`、`discovery/item/<id>` 及 `xhslink.com` 短链接）。
-  - `download_images` *(bool, 可选)*：设为 `true` 时，插件将自动在本地下载全部无水印原图。默认 `false` 仅作内存解析与富文本展示。
-  - `download_dir` *(string, 可选)*：自定义图片下载保存目录（如 `D:\VCP\downloads\我的壁纸`）。
+  - `url` *(string, 必需)*：小红书笔记 URL（支持 `discovery/item/<id>`、`explore/<id>` 及 `xhslink.com` 短链接）。
+  - `download_images` *(bool, 可选, 默认 false)*：是否将无水印超清原图批量下载到本地。
+  - `download_dir` *(string, 可选)*：自定义图片保存绝对路径；若留空且启用下载，默认落盘至系统 Downloads 目录。
+
+#### 📦 返回 Payload 格式说明
+
+执行成功返回结构化 JSON 及 Markdown 摘要：
+
+```json
+{
+  "status": "success",
+  "data": {
+    "note_id": "6ac07d3b000000001500a333",
+    "title": "今日桌面搭子分享 ✨",
+    "desc": "分享一下最近升级的工位环境，客制化机械键盘搭配胡桃木手托...",
+    "type": "normal",
+    "user": {
+      "user_id": "5f1a2b3c...",
+      "nickname": "极客小宅",
+      "avatar": "https://sns-avatar-qc.xhscdn.com/..."
+    },
+    "interact_info": {
+      "liked_count": "1.2万",
+      "collected_count": "3842",
+      "comment_count": "456",
+      "share_count": "128"
+    },
+    "tags": ["桌面美学", "机械键盘", "数码好物"],
+    "image_list": [
+      {
+        "url": "https://sns-img-qc.xhscdn.com/.../1040g00830...",
+        "width": 1440,
+        "height": 1920,
+        "local_path": "D:\\VCP\\downloads\\小红书原图\\6ac07d3b_01.jpg"
+      }
+    ],
+    "video_url": null,
+    "markdown": "# 今日桌面搭子分享 ✨\n\n**作者**：极客小宅 | **获赞**：1.2万 | **收藏**：3842\n\n分享一下最近升级的工位环境..."
+  }
+}
+```
 
 ---
 
 ### 2. 漫游首页发现流 (`feed`)
 
-无需任何 URL，自动获取小红书发现页最新热门推荐：
+用于女仆自主探索、漫游热门流并寻找互动灵感，无需提供任何前置 URL。
 
-```json
-{
-  "command": "feed",
-  "limit": 10
-}
+#### 🤖 VCP Agent 调用语法
+
+```text
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」XiaohongshuFetch「末」,
+command:「始」feed「末」,
+limit:「始」10「末」
+<<<[END_TOOL_REQUEST]>>>
 ```
 
 - **参数说明**：
-  - `limit` *(int, 可选, 默认 15)*：返回的热门笔记数量。
+  - `limit` *(int, 可选, 默认 15)*：希望获取的热门推荐卡片数量。
+
+#### 📦 返回 Payload 格式说明
+
+```json
+{
+  "status": "success",
+  "data": {
+    "total": 10,
+    "items": [
+      {
+        "id": "6701a2b3000000001c03d4e5",
+        "xsec_token": "AB12cdEfGhIjKlMnOp...",
+        "title": "天津秋季小众徒步路线盘点 🍂",
+        "type": "normal",
+        "user": {
+          "user_id": "6102c4d5...",
+          "nickname": "周末出游记"
+        },
+        "likes": "4520",
+        "cover_url": "https://sns-webpic-qc.xhscdn.com/...",
+        "url": "https://www.xiaohongshu.com/discovery/item/6701a2b3000000001c03d4e5?xsec_token=AB12cdEfGhIjKlMnOp..."
+      }
+    ]
+  }
+}
+```
 
 ---
 
 ### 3. 关键词精准搜索 (`search`)
 
-按指定关键词检索笔记库：
+按指定主题在全站范围内检索笔记，返回包含直达凭据（`xsec_token`）的结果集，支持二次调用 `fetch` 深入精读。
 
-```json
-{
-  "command": "search",
-  "keyword": "四姑娘山",
-  "limit": 6
-}
+#### 🤖 VCP Agent 调用语法
+
+```text
+<<<[TOOL_REQUEST]>>>
+maid:「始」Nova「末」,
+tool_name:「始」XiaohongshuFetch「末」,
+command:「始」search「末」,
+keyword:「始」桌面搭子 机械键盘「末」,
+limit:「始」6「末」
+<<<[END_TOOL_REQUEST]>>>
 ```
 
 - **参数说明**：
-  - `keyword` *(string, 必需)*：搜索关键词。
-  - `limit` *(int, 可选, 默认 10)*：返回的笔记结果数量。
+  - `keyword` *(string, 必需)*：检索关键词。
+  - `limit` *(int, 可选, 默认 10)*：返回的笔记卡片上限。
+
+#### 📦 返回 Payload 格式说明
+
+```json
+{
+  "status": "success",
+  "data": {
+    "keyword": "桌面搭子 机械键盘",
+    "total": 6,
+    "items": [
+      {
+        "id": "66f4321000000000120199aa",
+        "xsec_token": "CD34efGhIjKlMnOpQr...",
+        "title": "雨天沉浸式打字音体验 🌧️ 铝坨坨手感拉满",
+        "type": "video",
+        "user": {
+          "user_id": "5e88bb99...",
+          "nickname": "客制化小铺"
+        },
+        "likes": "1.8万",
+        "cover_url": "https://sns-webpic-qc.xhscdn.com/...",
+        "url": "https://www.xiaohongshu.com/discovery/item/66f4321000000000120199aa?xsec_token=CD34efGhIjKlMnOpQr..."
+      }
+    ]
+  }
+}
+```
 
 ---
 
@@ -156,4 +260,4 @@ XHS_BROWSER_EXECUTABLE_PATH=D:\Software\chromium\chrome-win32\chrome.exe
 
 ## 👩‍💻 维护者
 
-无渡&Nova · VCP AI Maid Team · 2026-10-06
+Nova · VCP AI Maid Team · 2026-10-06
