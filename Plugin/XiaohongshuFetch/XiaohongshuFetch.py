@@ -143,6 +143,8 @@ def bracket_balance_extract(html, marker):
                 if depth == 0:
                     raw_json = html[brace_start:i + 1]
                     raw_json = re.sub(r'\bundefined\b', 'null', raw_json)
+                    raw_json = re.sub(r'new Map\(\[.*?\]\)', '{}', raw_json)
+                    raw_json = re.sub(r'new Set\(\[.*?\]\)', '[]', raw_json)
                     try:
                         state = json.loads(raw_json)
                         logging.info('bracket-balance OK, len=%d', len(raw_json))
@@ -209,7 +211,52 @@ def extract_note_from_state(state, note_id):
                 break
     return note
 
-def fetch_note(note_id, cookies_dict, original_url=None, xsec_token=''):
+def download_note_images(note, save_dir, cookies_dict):
+    os.makedirs(save_dir, exist_ok=True)
+    image_list = note.get('imageList', note.get('image_list', note.get('images', []))) or []
+    downloaded_files = []
+    headers = dict(BASE_HEADERS)
+    cookie_str = '; '.join(f'{k}={v}' for k, v in cookies_dict.items())
+    if cookie_str:
+        headers['Cookie'] = cookie_str
+    headers['Referer'] = 'https://www.xiaohongshu.com/'
+
+    for idx, img in enumerate(image_list, 1):
+        candidates = []
+        if img.get('urlDefault'): candidates.append(img['urlDefault'])
+        if img.get('url_default'): candidates.append(img['url_default'])
+        trace_id = img.get('traceId') or img.get('trace_id') or ''
+        if trace_id:
+            candidates.append(f'https://ci.xiaohongshu.com/{trace_id}')
+            candidates.append(f'http://sns-webpic-qc.xhscdn.com/{trace_id}')
+        for info in img.get('info_list', img.get('infoList', [])):
+            if info.get('url'): candidates.append(info['url'])
+
+        saved = False
+        for c_url in candidates:
+            try:
+                r = requests.get(c_url, headers=headers, timeout=15)
+                if r.status_code == 200 and len(r.content) > 1000:
+                    ext = 'jpg'
+                    if r.content[:4] == b'RIFF' and b'WEBP' in r.content[:12]:
+                        ext = 'webp'
+                    elif r.content[:8] == b'\x89PNG\r\n\x1a\n':
+                        ext = 'png'
+                    fn = f'image_{idx:02d}.{ext}'
+                    fp = os.path.join(save_dir, fn)
+                    with open(fp, 'wb') as f:
+                        f.write(r.content)
+                    downloaded_files.append(fp)
+                    saved = True
+                    logging.info('图片 %d 下载成功: %s (%d bytes)', idx, fn, len(r.content))
+                    break
+            except Exception as e:
+                logging.debug('尝试 url 失败 %s: %s', c_url, e)
+        if not saved:
+            logging.warning('图片 %d 所有候选链接下载失败', idx)
+    return downloaded_files
+
+def fetch_note(note_id, cookies_dict, original_url=None, xsec_token='', download_images=False, download_dir=''):
     """
     带 xsec_token 的 HTML 请求，优先用原始路径，fallback /discovery/item/。
     xsec_token 必须透传，否则小红书返回纯 JS 壳页面。
@@ -245,16 +292,201 @@ def fetch_note(note_id, cookies_dict, original_url=None, xsec_token=''):
             continue
         note = extract_note_from_state(state, note_id)
         if note:
-            return format_note(note, note_id)
+            downloaded = []
+            if download_images:
+                save_dir = download_dir if download_dir else os.path.join(_PLUGIN_DIR, 'downloads', note_id)
+                downloaded = download_note_images(note, save_dir, cookies_dict)
+            return format_note(note, note_id, downloaded=downloaded)
         logging.warning('state 中未找到笔记数据: %s', url)
 
     return '❌ 未能在页面数据中定位笔记，请确认链接有效或更新 Cookie。'
+
+def resolve_browser_executable():
+    """解析浏览器执行体路径：用户配置优先 -> 系统默认 Edge/Chrome 自动探测 -> 留空使用 Playwright 原生"""
+    custom_path = (os.environ.get('XHS_BROWSER_EXECUTABLE_PATH') or '').strip()
+    if custom_path and os.path.exists(custom_path):
+        return custom_path
+
+    # 通用系统路径自动发现（覆盖主流 Windows 10/11 与各版本机器）
+    candidates = [
+        r'C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe',
+        r'C:\Program Files\Microsoft\Edge\Application\msedge.exe',
+        os.path.expandvars(r'%LOCALAPPDATA%\Microsoft\Edge\Application\msedge.exe'),
+        r'C:\Program Files\Google\Chrome\Application\chrome.exe',
+        r'C:\Program Files (x86)\Google\Chrome\Application\chrome.exe',
+        os.path.expandvars(r'%LOCALAPPDATA%\Google\Chrome\Application\chrome.exe'),
+        r'D:\Software\chromium\chrome-win32\chrome.exe',
+    ]
+    for c in candidates:
+        if os.path.exists(c):
+            return c
+    return None
+
+def fetch_explore_feed(cookies_dict, limit=15):
+    """通过真实浏览器上下文漫游发现页推荐流"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return '❌ 未安装 playwright，请先安装 playwright 依赖。'
+
+    exe = resolve_browser_executable()
+
+    cookies = []
+    for k, v in cookies_dict.items():
+        cookies.append({'name': k, 'value': v, 'domain': '.xiaohongshu.com', 'path': '/'})
+
+    results = []
+    try:
+        with sync_playwright() as p:
+            launch_kwargs = {'headless': True, 'args': ['--disable-blink-features=AutomationControlled']}
+            if exe:
+                launch_kwargs['executable_path'] = exe
+            user_data_dir = os.path.join(_PLUGIN_DIR, 'browser_data')
+            os.makedirs(user_data_dir, exist_ok=True)
+            launch_args = ['--disable-blink-features=AutomationControlled', '--allow-running-insecure-content', '--ignore-certificate-errors']
+            context = p.chromium.launch_persistent_context(
+                user_data_dir,
+                executable_path=exe if exe else None,
+                headless=True,
+                args=launch_args,
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                viewport={'width': 1440, 'height': 900}
+            )
+            context.add_cookies(cookies)
+            page = context.pages[0] if context.pages else context.new_page()
+            page.add_init_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined});")
+            page.goto('https://www.xiaohongshu.com/explore', wait_until='commit', timeout=20000)
+            page.wait_for_timeout(5000)
+            page.mouse.wheel(0, 400)
+            page.wait_for_timeout(2000)
+
+            raw_cards = page.evaluate('''() => {
+                const list = [];
+                const sections = document.querySelectorAll("section.note-item, div.note-item, [class*='note-item']");
+                for (const sec of sections) {
+                    const link = sec.querySelector("a[href*='/explore/'], a[href*='/discovery/item/']");
+                    const titleEl = sec.querySelector(".title, .footer .name, a.title, [class*='title']");
+                    const authorEl = sec.querySelector(".author, .name, [class*='author']");
+                    const likeEl = sec.querySelector(".like-wrapper, .count, [class*='like']");
+                    if (link) {
+                        const href = link.getAttribute("href") || "";
+                        const m = href.match(/(?:explore|discovery\/item)\\/([a-zA-Z0-9]+)/);
+                        list.push({
+                            id: m ? m[1] : "",
+                            href: href,
+                            title: titleEl ? titleEl.textContent.trim() : "",
+                            author: authorEl ? authorEl.textContent.trim() : "",
+                            likes: likeEl ? likeEl.textContent.trim() : ""
+                        });
+                    }
+                }
+                return list;
+            }''')
+            context.close()
+
+            results = raw_cards[:limit]
+    except Exception as e:
+        return f'❌ 漫游发现流失败: {e}'
+
+    if not results:
+        return '⚠️ 未能从发现页抓取到有效推荐卡片，请检查 Cookie 状态。'
+
+    lines = ['### 🌸 小红书发现流推荐笔记（共 ' + str(len(results)) + ' 篇）\n']
+    for idx, c in enumerate(results, 1):
+        full_url = f'https://www.xiaohongshu.com{c["href"]}' if c['href'].startswith('/') else c['href']
+        lines.append(f'{idx}. **{c["title"]}**')
+        lines.append(f'   - 作者: {c["author"]} | ❤️ 点赞: {c["likes"]}')
+        lines.append(f'   - 链接: {full_url}\n')
+
+    lines.append('*提示：女仆可自主选择感兴趣的链接调用 fetch 命令进行精读或下载！*')
+    return '\n'.join(lines)
+
+def search_notes(keyword, cookies_dict, limit=10):
+    """通过真实浏览器上下文模拟点击放大镜执行关键词搜索并截包"""
+    try:
+        from playwright.sync_api import sync_playwright
+    except ImportError:
+        return '❌ 未安装 playwright，请先安装 playwright 依赖。'
+
+    exe = resolve_browser_executable()
+
+    import urllib.parse
+    encoded_kw = urllib.parse.quote(keyword)
+    search_url = f'https://www.xiaohongshu.com/search_result?keyword={encoded_kw}&search_type=note'
+
+    cookies = []
+    for k, v in cookies_dict.items():
+        cookies.append({'name': k, 'value': v, 'domain': '.xiaohongshu.com', 'path': '/'})
+
+    captured = []
+    try:
+        with sync_playwright() as p:
+            launch_kwargs = {
+                'headless': True,
+                'args': ['--disable-blink-features=AutomationControlled', '--allow-running-insecure-content', '--ignore-certificate-errors']
+            }
+            if exe:
+                launch_kwargs['executable_path'] = exe
+            browser = p.chromium.launch(**launch_kwargs)
+            context = browser.new_context(
+                user_agent='Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36',
+                viewport={'width': 1280, 'height': 800}
+            )
+            context.add_cookies(cookies)
+            page = context.new_page()
+
+            def on_resp(resp):
+                if 'search/notes' in resp.url:
+                    try:
+                        data = resp.json()
+                        items = data.get('data', {}).get('items', [])
+                        if items:
+                            captured.extend(items)
+                    except Exception:
+                        pass
+
+            page.on('response', on_resp)
+            page.goto(search_url, wait_until='commit', timeout=20000)
+            page.wait_for_timeout(3000)
+
+            # 点击放大镜触发搜索接口发包
+            page.mouse.click(668, 25)
+
+            for _ in range(8):
+                if captured:
+                    break
+                page.wait_for_timeout(1000)
+
+            browser.close()
+    except Exception as e:
+        return f'❌ 搜索失败: {e}'
+
+    if not captured:
+        return f'⚠️ 未能搜索到关于“{keyword}”的相关笔记，请确认 Cookie 是否有效。'
+
+    items = captured[:limit]
+    lines = [f'### 🔍 小红书关键词搜索结果：【{keyword}】（共 {len(items)} 篇）\n']
+    for idx, it in enumerate(items, 1):
+        nc = it.get('note_card', it)
+        title = nc.get('display_title') or nc.get('title') or '无标题'
+        user = nc.get('user', {}).get('nickname') or '未知作者'
+        nid = it.get('id')
+        token = it.get('xsec_token', '')
+        link = f'https://www.xiaohongshu.com/discovery/item/{nid}?xsec_token={token}&xsec_source=pc_search' if token else f'https://www.xiaohongshu.com/discovery/item/{nid}'
+        likes = (nc.get('interact_info') or {}).get('liked_count', '')
+        like_str = f' | ❤️ 点赞: {likes}' if likes else ''
+        lines.append(f'{idx}. **{title}**')
+        lines.append(f'   - 作者: {user}{like_str}')
+        lines.append(f'   - 链接: {link}\n')
+
+    lines.append('*提示：可直接复制上方链接调用 fetch 命令进行精读或原图下载！*')
+    return '\n'.join(lines)
 
 # ───────────────────────────────────────────────
 # 统一格式化输出
 # ───────────────────────────────────────────────
 
-def format_note(note, note_id):
+def format_note(note, note_id, downloaded=None):
     title = (note.get('display_title') or note.get('title') or '').strip()
     desc = (note.get('desc') or note.get('description') or note.get('note_text') or '').strip()
     if not title:
@@ -318,6 +550,11 @@ def format_note(note, note_id):
         if tags.strip():
             lines.append('\n**标签**: ' + tags)
 
+    if downloaded:
+        lines.append('\n#### 💾 本地已下载图片（共 ' + str(len(downloaded)) + ' 张）:')
+        for f in downloaded:
+            lines.append('- `' + f + '`')
+
     lines.append('\n---\n*数据来源：小红书 | 笔记ID: ' + note_id + '*')
     return '\n'.join(lines)
 
@@ -333,13 +570,37 @@ def main():
             raise ValueError('没有接收到标准输入数据')
 
         input_data = json.loads(raw)
-        raw_url = input_data.get('url', '').strip()
-        if not raw_url:
-            raise ValueError('缺少必需参数: url')
+        cmd = input_data.get('command', 'fetch')
 
         a1 = os.environ.get('XHS_COOKIE_A1', '') or input_data.get('a1', '')
         web_session = os.environ.get('XHS_COOKIE_WEB_SESSION', '') or input_data.get('web_session', '')
         web_id = os.environ.get('XHS_COOKIE_WEB_ID', '') or input_data.get('web_id', '')
+        cookies_dict = build_cookies_dict(a1, web_session, web_id)
+
+        if cmd == 'feed':
+            limit = int(input_data.get('limit', 15))
+            result_text = fetch_explore_feed(cookies_dict, limit=limit)
+            output = {'status': 'success', 'result': result_text}
+            sys.stdout.buffer.write(json.dumps(output, ensure_ascii=False).encode('utf-8'))
+            sys.stdout.buffer.write(b'\n')
+            sys.stdout.buffer.flush()
+            return
+
+        if cmd == 'search':
+            keyword = input_data.get('keyword', '').strip()
+            if not keyword:
+                raise ValueError('缺少必需参数: keyword')
+            limit = int(input_data.get('limit', 10))
+            result_text = search_notes(keyword, cookies_dict, limit=limit)
+            output = {'status': 'success', 'result': result_text}
+            sys.stdout.buffer.write(json.dumps(output, ensure_ascii=False).encode('utf-8'))
+            sys.stdout.buffer.write(b'\n')
+            sys.stdout.buffer.flush()
+            return
+
+        raw_url = input_data.get('url', '').strip()
+        if not raw_url:
+            raise ValueError('缺少必需参数: url')
 
         logging.info('原始 URL: %s', raw_url)
         logging.info('Cookie a1:%s web_session:%s webId:%s',
@@ -356,8 +617,10 @@ def main():
         logging.info('笔记 ID: %s', note_id)
         logging.info('xsec_token: %s', xsec_token[:20] + '...' if len(xsec_token) > 20 else xsec_token)
 
-        cookies_dict = build_cookies_dict(a1, web_session, web_id)
-        result_text = fetch_note(note_id, cookies_dict, original_url=resolved_url, xsec_token=xsec_token)
+        download_images = input_data.get('download_images', False)
+        download_dir = input_data.get('download_dir', '') or input_data.get('downloadDir', '')
+        result_text = fetch_note(note_id, cookies_dict, original_url=resolved_url, xsec_token=xsec_token,
+                                 download_images=download_images, download_dir=download_dir)
         output = {'status': 'success', 'result': result_text}
 
     except Exception as e:
