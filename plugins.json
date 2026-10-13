@@ -1,32 +1,12 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-03T10:56:49.403567+00:00",
+  "generatedAt": "2026-10-13T11:38:28.392089+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
     "branch": "main"
   },
   "plugins": [
-    {
-      "name": "1PanelInfoProvider",
-      "displayName": "1Panel 信息提供器",
-      "description": "从1Panel服务器获取Dashboard基础信息和操作系统信息，并通过独立的系统提示词占位符提供这些数据。",
-      "version": "1.0.0",
-      "author": "B3000Kcn",
-      "icon": "extension",
-      "category": "data-provider",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/1PanelInfoProvider/1PanelInfoProvider.zip"
-    },
-    {
-      "name": "AnkiSearch",
-      "displayName": "Anki 搜索与查询",
-      "description": "VCP 体系下的独立 Anki 查询工具。支持使用 Anki 强大的查询语法搜索卡片，获取牌组统计数据，以及查询笔记类型（Model）。",
-      "version": "1.2.0",
-      "author": "VCPAnki Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/AnkiSearch/AnkiSearch.zip"
-    },
     {
       "name": "AnkiManage",
       "displayName": "Anki 管理与操作",
@@ -38,54 +18,35 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/AnkiManage/AnkiManage.zip"
     },
     {
+      "name": "AnkiSearch",
+      "displayName": "Anki 搜索与查询",
+      "description": "VCP 体系下的独立 Anki 查询工具。支持使用 Anki 强大的查询语法搜索卡片，获取牌组统计数据，以及查询笔记类型（Model）。",
+      "version": "1.2.0",
+      "author": "VCPAnki Team",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/AnkiSearch/AnkiSearch.zip"
+    },
+    {
       "name": "BlenderBridge",
       "displayName": "Blender 3D 桥接器",
       "description": "VCP <-> Blender 官方 MCP Server <-> Blender Add-on 的三端桥接，外加可选的 GMR 生成式动作绑定扩展。桥接本体走双跳架构：VCP 经 Streamable HTTP 连 blender-mcp (默认 6090)，后者再经 TCP 连 Blender 内的插件 (默认 9876)，提供 59 个工具（场景查询、建模、材质、几何节点、蜡笔、渲染、截图、API 文档），采用渐进式发现避免上下文膨胀。GMR 扩展模块位于 gmr/ 子目录，提供动作生成模型的仓库登记、训练任务、推理 sidecar 管理共 15 个命令；该模块与桥接本体解耦，整目录删除后本体照常工作。",
       "version": "1.1.0",
       "author": "竹林夕弦 (Lucifa-sakula)",
       "icon": "extension",
-      "category": "tool",
+      "category": "browser",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/BlenderBridge/BlenderBridge.zip"
     },
     {
-      "name": "SynBiliVision",
-      "displayName": "B站用户信息综合查询",
-      "description": "获取当前登录 B 站账号的综合信息，包括浏览历史、收藏夹、最近收藏、投币记录和观看偏好分析。",
-      "version": "2.3.0",
-      "author": "VCP Team",
+      "name": "DistributeFileOperator",
+      "displayName": "VCP分布式文件操作器",
+      "description": "VCP服务器专用的一个强大的文件系统操作插件，允许AI对受限目录进行读、写、列出、移动、复制、删除等多种文件和目录操作。特别增强了文件读取能力，可自动提取PDF、Word(.docx)和表格(.xlsx, .csv)文件的纯文本内容。",
+      "version": "1.0.1",
+      "author": "VCPToolBox",
       "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SynBiliVision/SynBiliVision.zip"
-    },
-    {
-      "name": "ComfyCloudGen",
-      "displayName": "Comfy Cloud 云端图像/视频生成",
-      "description": "通过Comfy Cloud云端GPU生成图像或视频。数据驱动架构，自动匹配模型生态，支持895+云端模型。三种模式：auto(默认)、template、raw。",
-      "version": "0.4.0",
-      "author": "Rosa",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ComfyCloudGen/ComfyCloudGen.zip"
-    },
-    {
-      "name": "FRPSInfoProvider",
-      "displayName": "FRPS 设备信息提供器",
-      "description": "定期从FRPS服务器获取所有类型的代理设备信息，并整合成一个文本文件供占位符使用。",
-      "version": "1.0.0",
-      "author": "B3000Kcn",
-      "icon": "extension",
-      "category": "data-provider",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/FRPSInfoProvider/FRPSInfoProvider.zip"
-    },
-    {
-      "name": "NanoBananaGenOR",
-      "displayName": "Gemini 2.5 NanoBanana 图像生成 (OpenRouter)",
-      "description": "使用 OpenRouter 接口调用 Google Gemini 2.5 Flash Image Preview 模型进行高级的图像生成和编辑。支持代理和多密钥随机选择。",
-      "version": "1.0.0",
-      "author": "Kilo Code",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/NanoBananaGenOR/NanoBananaGenOR.zip"
+      "category": "system-integration",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/FileOperator/DistributeFileOperator.zip",
+      "license": "MIT"
     },
     {
       "name": "GitOperator",
@@ -94,8 +55,18 @@
       "version": "1.1.0",
       "author": "Nova & hjhjd",
       "icon": "extension",
-      "category": "tool",
+      "category": "system-integration",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitOperator/GitOperator.zip"
+    },
+    {
+      "name": "GitSearch",
+      "displayName": "代码托管平台聚合搜索",
+      "description": "聚合 GitHub、GitLab、Gitee 三大代码托管平台的纯读取操作，提供统一的工具名和调用方式。",
+      "version": "1.0.0",
+      "author": "VCPToolBox",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitSearch/GitSearch.zip"
     },
     {
       "name": "GodotBridge",
@@ -104,7 +75,7 @@
       "version": "1.0.0",
       "author": "ATRI",
       "icon": "extension",
-      "category": "tool",
+      "category": "browser",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GodotBridge/GodotBridge.zip"
     },
     {
@@ -118,14 +89,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GodotEventReceiver/GodotEventReceiver.zip"
     },
     {
-      "name": "GrokVideoGen",
-      "displayName": "Grok 视频生成器",
-      "description": "使用 Grok API 进行视频生成（支持文生视频、图生视频、视频续写、视频拼接）。",
-      "version": "1.3.0",
-      "author": "VCP Team",
+      "name": "GuanLan",
+      "displayName": "观澜-A股数据引擎",
+      "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
+      "version": "4.5.0",
+      "author": "观澜 & 冬竹子（翔）",
       "icon": "extension",
       "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GrokVideo/GrokVideoGen.zip"
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GuanLan/GuanLan.zip"
     },
     {
       "name": "HealthQuery",
@@ -138,24 +109,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/HealthQuery/HealthQuery.zip"
     },
     {
-      "name": "IMAPSearch",
-      "displayName": "IMAP 邮件本地搜索",
-      "description": "一个同步 VCP 插件，用于在 IMAPIndex 插件生成的本地邮件存储中执行全文搜索。它支持分页和可配置的索引目录。",
-      "version": "1.1.0",
-      "author": "B3000Kcn",
+      "name": "JapaneseHelper",
+      "displayName": "日语学习助手",
+      "description": "日语学习增强插件（纯Python基础层 + optional增强层）。支持深度语法解析、动态句型识别（含部分活用补偿）、错题本分析推荐、复习调度、汉字查询、资源状态检查、JLPT统计（jlpt_stats）与可选 OJAD 声调接口。结构化接口支持 Lookup/KanjiInfo/JLPTCheck/ReadingAid/ParseTree/SchemaProbe。SemanticEnhance 默认使用 rule 风格判定，已修复礼貌体被误判为 mixed 的问题；SyntaxEnhance 默认 heuristic，可选 GiNZA 增强；ReadingEnhance 支持可选 romaji 后端。已补齐 SentenceSplit/ReadingEnhance/SyntaxEnhance/SemanticEnhance/TeachingAssetsStatus 五项分层命令。Romanize/Furigana 已修复促音拆裂与活用显示问题；已完成全命令回归与重复旧函数清理。",
+      "version": "2.14.2",
+      "author": "Nova",
       "icon": "extension",
       "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/IMAPSearch/IMAPSearch.zip"
-    },
-    {
-      "name": "IMAPIndex",
-      "displayName": "IMAP 邮件本地索引插件",
-      "description": "静态插件：定期通过 IMAP 拉取白名单匹配邮件到本地（.eml -> .md 转换），合并生成索引文本并输出到 stdout，供占位符注入系统提示词使用。仅邮件链路支持 HTTP(S) CONNECT 代理（可选）。",
-      "version": "1.0.0",
-      "author": "B3000Kcn",
-      "icon": "extension",
-      "category": "data-provider",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/IMAPIndex/IMAPIndex.zip"
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/JapaneseHelper/JapaneseHelper.zip"
     },
     {
       "name": "KarakeepSearch",
@@ -164,7 +125,7 @@
       "version": "0.1.0",
       "author": "Kilo Code",
       "icon": "extension",
-      "category": "tool",
+      "category": "information-retrieval",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/KarakeepSearch/KarakeepSearch.zip"
     },
     {
@@ -174,7 +135,7 @@
       "version": "1.0.0",
       "author": "B3000Kcn & DBL1F7E5",
       "icon": "extension",
-      "category": "tool",
+      "category": "information-retrieval",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/KEGGSearch/KEGGSearch.zip"
     },
     {
@@ -188,297 +149,6 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/LdBook/LdBook.zip"
     },
     {
-      "name": "MCPO",
-      "displayName": "MCPO 工具桥接器",
-      "description": "基于 mcpo 的 MCP 工具桥接插件，能够自动发现、缓存和调用 MCP 工具，支持多种 MCP 服务器类型。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/MCPO/MCPO.zip"
-    },
-    {
-      "name": "MCPOMonitor",
-      "displayName": "MCPO 服务状态监控器",
-      "description": "监控 MCPO 服务器状态并提供所有可用 MCP 工具的详细信息，通过 {{MCPOServiceStatus}} 占位符集成到系统提示词中。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "data-provider",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/MCPOMonitor/MCPOMonitor.zip"
-    },
-    {
-      "name": "MIDITranslator",
-      "displayName": "MIDI翻译器",
-      "description": "一个高性能的MIDI文件解析与生成插件，可以从midi-input目录读取MIDI文件并解析为DSL格式，也可以从DSL生成MIDI文件到midi-output目录。核心引擎由Rust编写，确保性能与安全。提供DSL语法验证、事件提取和双向转换测试等功能。",
-      "version": "0.3.0",
-      "author": "ATRI",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/MIDITranslator/MIDITranslator.zip"
-    },
-    {
-      "name": "NovelAIGen",
-      "displayName": "NovelAI 图像生成器 (全能力网关)",
-      "description": "NovelAI 六端点多渠道全参数网关。",
-      "version": "2.1.0",
-      "author": "VCP-Assistant; infinite-vector",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/NovelAIGen/NovelAIGen.zip"
-    },
-    {
-      "name": "ObsidianBridge",
-      "displayName": "Obsidian 笔记桥接器",
-      "description": "通过 Obsidian CLI (v1.12+) 桥接 VCP 与 Obsidian 笔记库。支持笔记读写、全文搜索(含上下文)、每日笔记、文件/文件夹浏览、任务管理、反向链接/出站链接查询、标签统计、属性管理、大纲查看、字数统计、模板列表等 22 项基础能力。v1.4.0 新增节点写作模式(node_* 6 命令)：以不可见的 HTML 注释锚点为 Markdown 提供节点级寻址与局部替换能力（Obsidian CLI 本身只有 create/append/prepend，无替换），Agent 侧全程无需接触 HTML。节点模式采用内存节点编译结合 Obsidian CLI 物理提交机制，在保证桌面端 IPC 缓存一致性与历史撤销树完整的前提下，向 Agent 提供稳定确定的局部编辑能力。",
-      "version": "1.4.0",
-      "author": "Nova & 小夜 | 扩展: infinite-vector",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ObsidianBridge/ObsidianBridge.zip"
-    },
-    {
-      "name": "PenpotBridge",
-      "displayName": "Penpot 设计桥接器",
-      "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
-      "version": "1.0.0",
-      "author": "ATRI&Lucifer-sakura",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PenpotBridge/PenpotBridge.zip"
-    },
-    {
-      "name": "PubMedSearch",
-      "displayName": "PubMed 文献检索插件",
-      "description": "提供基于 NCBI E-utilities 和 PMC 的 PubMed 文献检索、详情获取、引用/相似文献分析与标识符转换等能力。实现参考 PubMed-MCP-Server 原始实现，保持结果结构和语义尽量一致，便于从 MCP 平滑迁移。",
-      "version": "1.0.0",
-      "author": "B3000Kcn & DBL1F7E5",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PubMedSearch/PubMedSearch.zip"
-    },
-    {
-      "name": "PyScreenshot",
-      "displayName": "Python截图插件",
-      "description": "一个使用Python和Pillow从桌面截取屏幕图像的同步插件。",
-      "version": "1.0.0",
-      "author": "Cline",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PyScreenshot/PyScreenshot.zip"
-    },
-    {
-      "name": "PyCameraCapture",
-      "displayName": "Python摄像头插件",
-      "description": "一个使用Python和OpenCV从摄像头捕获图像的同步插件。",
-      "version": "1.0.0",
-      "author": "Cline",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PyCameraCapture/PyCameraCapture.zip"
-    },
-    {
-      "name": "SenseGen",
-      "displayName": "SenseGen 图文文档型图片生成器",
-      "description": "通过 SenseNova 的 sensenova-u1-fast 模型生成适合 PPT、PDF、杂志、信息图、海报等图文并茂风格的高分辨率图片文档。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SenseGen/SenseGen.zip"
-    },
-    {
-      "name": "SerpSearch",
-      "displayName": "Serp API 搜索引擎",
-      "description": "一个使用SerpApi提供多种搜索引擎（如Bing, DuckDuckGo, Google Scholar）的插件。",
-      "version": "1.0.0",
-      "author": "Your Name",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerpSearch/SerpSearch.zip"
-    },
-    {
-      "name": "SerplySearch",
-      "displayName": "Serply 搜索插件",
-      "description": "使用 Serply API 进行网络搜索，返回 Google 搜索结果。AI可以指定搜索查询、返回结果数量、网页或新闻类别、时效范围、国家及语言。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
-      "version": "0.1.0",
-      "author": "Serply",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerplySearch/SerplySearch.zip"
-    },
-    {
-      "name": "SunoGen",
-      "displayName": "Suno AI 音乐生成",
-      "description": "使用 Suno API 生成原创歌曲。该版本为Newapi代理的通用版本。支持通过歌词、风格、标题进行自定义创作，或通过描述获取灵感创作，还可以继续生成已有的歌曲片段。",
-      "version": "0.1.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SunoGen/SunoGen.zip"
-    },
-    {
-      "name": "SunoMusicGen",
-      "displayName": "Suno音乐生成器(新API)",
-      "description": "使用新的Suno API(sunoapi.org)生成高质量AI音乐、支持音乐延长和音频处理（异步版本）",
-      "version": "2.2.0",
-      "author": "Ava",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SunoMusicGen/SunoMusicGen.zip"
-    },
-    {
-      "name": "TinyFishBrowser",
-      "displayName": "TinyFish 搜索与网页抓取",
-      "description": "基于 TinyFish API 的搜索与网页内容抓取插件。支持网络搜索（返回结构化结果）和网页内容抓取（真实浏览器渲染，支持JS页面，返回Markdown/HTML/JSON）。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TinyFishBrowser/TinyFishBrowser.zip"
-    },
-    {
-      "name": "DomainSafetyChecker",
-      "displayName": "URL/域名安全核查器",
-      "description": "低交互、静态、非侵入式 URL/域名安全核查工具。可帮助 AI 对用户提供的网址、域名、短链落地页、疑似钓鱼站、下载页、登录页、支付页进行安全风险初筛，并返回合并完整 JSON 证据的详细 Markdown 报告。",
-      "version": "1.2.0",
-      "author": "VCPToolBox",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/DomainSafetyChecker/DomainSafetyChecker.zip"
-    },
-    {
-      "name": "VCPQQBotServer",
-      "displayName": "VCP QQBot 单聊/群聊桥接服务",
-      "description": "常驻连接腾讯 QQBot Gateway，接收 QQ 单聊与群聊 @ 消息后转发到 VCP 主服务器 /v1/chat/completions，并将非流式 AI 回复拆分为 QQ 文本与真正的 QQ 图片消息发回用户。",
-      "version": "0.1.0",
-      "author": "VCPToolBox",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPQQBotServer/VCPQQBotServer.zip"
-    },
-    {
-      "name": "VCPRedisOperator",
-      "displayName": "VCP Redis 操作工具",
-      "description": "VCP Redis 操作插件。AI 通过 ExecuteRedis 命令安全操作 Redis，插件做三道安全闸：命令白名单 / Key 前缀白名单 / 按 Agent 分桶限频。核心用途：SQL大师写入通知后 INCR 未读计数，触发前端实时角标更新。",
-      "version": "1.0.0",
-      "author": "pioneer798",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPRedisOperator/VCPRedisOperator.zip"
-    },
-    {
-      "name": "VCPWeCom",
-      "displayName": "VCP 企业微信桥接",
-      "description": "混合服务插件：常驻企微 WebSocket 长连接，收到文本消息后自动唤醒 config.env 中指定的 AgentAssistant Agent，生成回复后通过流式回复推回企微。同时提供 WeComSend 工具供其他 Agent 主动推送企微消息。",
-      "version": "0.1.0",
-      "author": "小夜",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPWeCom/VCPWeCom.zip"
-    },
-    {
-      "name": "SynapsePusher",
-      "displayName": "VCP 日志 Synapse 推送器",
-      "description": "将 VCP 工具调用日志实时推送到指定的 Synapse (Matrix) 房间。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SynapsePusher/SynapsePusher.zip"
-    },
-    {
-      "name": "VCPFeishu",
-      "displayName": "VCP 飞书桥接",
-      "description": "混合服务插件：常驻飞书 WebSocket 长连接，收到消息后在绑定 Agent 下创建或复用 VCPChat 话题会话，并通过系统 settings 与 Agent 配置调用 VCP 后端生成回复。",
-      "version": "0.1.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPFeishu/VCPFeishu.zip"
-    },
-    {
-      "name": "DistributeFileOperator",
-      "displayName": "VCP分布式文件操作器",
-      "description": "VCP服务器专用的一个强大的文件系统操作插件，允许AI对受限目录进行读、写、列出、移动、复制、删除等多种文件和目录操作。特别增强了文件读取能力，可自动提取PDF、Word(.docx)和表格(.xlsx, .csv)文件的纯文本内容。",
-      "version": "1.0.1",
-      "author": "VCPToolBox",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/FileOperator/DistributeFileOperator.zip",
-      "license": "MIT"
-    },
-    {
-      "name": "VCPDatabaseOperator",
-      "displayName": "VCP数据库操作工具",
-      "description": "VCP数据库操作插件（SQL-First）。AI 直接写原生 MySQL 语句，插件做 AST 解析 + 五道安全闸（动词过滤/表白名单/CRUD权限矩阵/参数化绑定/写操作熔断）。推荐用 ExecuteSQL；保留 QueryTable/InsertRow/UpdateRow/DeleteRow 结构化命令做兼容。",
-      "version": "1.0.3",
-      "author": "pioneer798",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPDatabaseOperator/VCPDatabaseOperator.zip"
-    },
-    {
-      "name": "WebUIGen",
-      "displayName": "WebUI云算力生图",
-      "description": "调用云算力API生成高质量图像，支持多种模型和自定义参数。",
-      "version": "1.0.0",
-      "author": "Kilo Code",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/WebUIGen/WebUIGen.zip"
-    },
-    {
-      "name": "YoucomSearch",
-      "displayName": "You.com 搜索插件",
-      "description": "使用 You.com API 进行网络搜索。AI可以指定搜索查询、返回结果数量、时效范围、国家及语言，获取网页与新闻结果。支持使用 || 分隔多个关键词进行并发搜索，所有结果同时返回。",
-      "version": "0.1.0",
-      "author": "Emos21",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YoucomSearch/YoucomSearch.zip"
-    },
-    {
-      "name": "YTFetch",
-      "displayName": "YouTube Gemini Fetch",
-      "description": "Use Gemini API to directly read public YouTube URLs and return multimodal video/audio analysis without downloading the video locally.",
-      "version": "0.1.0",
-      "author": "VCP Community",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YTFetch/YTFetch.zip"
-    },
-    {
-      "name": "YoutubeFetch",
-      "displayName": "YouTube 内容获取插件",
-      "description": "YouTube 内容获取插件。基于 YouTube Data API v3 获取视频信息、搜索结果、频道信息、频道投稿、热门视频与评论，并通过 youtube-transcript-api 获取字幕/自动字幕。支持 youtube.com、youtu.be、Shorts、embed、live 链接与直接 videoId。",
-      "version": "1.0.0",
-      "author": "Bocchi777",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YoutubeFetch/YoutubeFetch.zip"
-    },
-    {
-      "name": "ZImageGen",
-      "displayName": "Z-Image 文生图（阿里通义）",
-      "description": "通过 Hugging Face Spaces API 使用阿里巴巴通义实验室的 Z-Image-Turbo 模型生成高质量图片。支持中英文提示词，8步推理，亚秒级延迟。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ZImageGen/ZImageGen.zip"
-    },
-    {
-      "name": "GitSearch",
-      "displayName": "代码托管平台聚合搜索",
-      "description": "聚合 GitHub、GitLab、Gitee 三大代码托管平台的纯读取操作，提供统一的工具名和调用方式。",
-      "version": "1.0.0",
-      "author": "VCPToolBox",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GitSearch/GitSearch.zip"
-    },
-    {
       "name": "LexibankOperator",
       "displayName": "全球词源追溯引擎 (LexibankOperator)",
       "description": "基于 MPI-EVA Lexibank² (CLDF规范) 与依赖倒置架构的全球跨语系词源追溯与音系分析引擎。支持 Jev 功能决策精排、上游热更新与蓝绿无缝热切。",
@@ -489,105 +159,14 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/LexibankOperator/LexibankOperator.zip"
     },
     {
-      "name": "XiaohongshuFetch",
-      "displayName": "小红书爬虫",
-      "description": "小红书全能生态解析插件。支持图文与视频笔记定向精读、无水印原图批量下载、发现流自主漫游与关键词精准搜索。",
-      "version": "5.0.0",
-      "author": "VCP AI Maid Team",
-      "icon": "travel_explore",
-      "category": "information-retrieval",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/XiaohongshuFetch/XiaohongshuFetch.zip",
-      "minVcpVersion": "1.0.0"
-    },
-    {
-      "name": "WorkspaceInjector",
-      "displayName": "工作区动态注入",
-      "description": "通过在系统提示词中使用 {{Workspace::alias}} 占位符，将预设的本地文件夹目录树动态注入到上下文中。",
-      "version": "1.2.0",
-      "author": "Gemini & User",
-      "icon": "extension",
-      "category": "system-integration",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/WorkspaceInjector/WorkspaceInjector.zip"
-    },
-    {
-      "name": "SVCardFinder",
-      "displayName": "影之诗查卡器(WB)",
-      "description": "一个用于查询《影之诗：世界超越》卡牌信息的插件。",
+      "name": "NanoBananaGenOR",
+      "displayName": "Gemini 2.5 NanoBanana 图像生成 (OpenRouter)",
+      "description": "使用 OpenRouter 接口调用 Google Gemini 2.5 Flash Image Preview 模型进行高级的图像生成和编辑。支持代理和多密钥随机选择。",
       "version": "1.0.0",
-      "author": "greyfilm",
+      "author": "Kilo Code",
       "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SVCardFinder/SVCardFinder.zip"
-    },
-    {
-      "name": "JapaneseHelper",
-      "displayName": "日语学习助手",
-      "description": "日语学习增强插件（纯Python基础层 + optional增强层）。支持深度语法解析、动态句型识别（含部分活用补偿）、错题本分析推荐、复习调度、汉字查询、资源状态检查、JLPT统计（jlpt_stats）与可选 OJAD 声调接口。结构化接口支持 Lookup/KanjiInfo/JLPTCheck/ReadingAid/ParseTree/SchemaProbe。SemanticEnhance 默认使用 rule 风格判定，已修复礼貌体被误判为 mixed 的问题；SyntaxEnhance 默认 heuristic，可选 GiNZA 增强；ReadingEnhance 支持可选 romaji 后端。已补齐 SentenceSplit/ReadingEnhance/SyntaxEnhance/SemanticEnhance/TeachingAssetsStatus 五项分层命令。Romanize/Furigana 已修复促音拆裂与活用显示问题；已完成全命令回归与重复旧函数清理。",
-      "version": "2.14.2",
-      "author": "Nova",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/JapaneseHelper/JapaneseHelper.zip"
-    },
-    {
-      "name": "TagFolder",
-      "displayName": "标签折叠器",
-      "description": "读取 list.md 中的标签白名单，生成折叠行为指令注入系统提示词，实现对 nvim 系列标签包裹内容的上下文折叠管理。",
-      "version": "1.0.0",
-      "author": "ATRI & Lucifer",
-      "icon": "extension",
-      "category": "data-provider",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TagFolder/TagFolder.zip"
-    },
-    {
-      "name": "TicktickManager",
-      "displayName": "滴答清单管理器",
-      "description": "混合插件：提供滴答清单/TickTick/Dida365 任务同步调用和白名单项目静态任务快照注入。",
-      "version": "1.0.0",
-      "author": "VCP Team",
-      "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TicktickManager/TicktickManager.zip"
-    },
-    {
-      "name": "VolcSearch",
-      "displayName": "火山引擎搜索插件",
-      "description": "使用火山引擎联网搜索 API 进行中文网络搜索。AI可以指定搜索查询、返回结果数量，并可选择包含正文内容、设置搜索时间范围等。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
-      "version": "0.3.0",
-      "author": "Roo",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VolcSearch/VolcSearch.zip"
-    },
-    {
-      "name": "TomatoNovel",
-      "displayName": "番茄小说增强器",
-      "description": "提供多功能搜书、全本精准下载、以及极速下载大纲目录等功能。",
-      "version": "1.0.0",
-      "author": "Antigravity",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TomatoNovel/TomatoNovel.zip"
-    },
-    {
-      "name": "ZhihuSearch",
-      "displayName": "知乎搜索插件",
-      "description": "调用知乎开放平台 zhihu_search 与 global_search API 搜索知乎内容，返回面向 AI 阅读的 Markdown content、sources，以及标题、链接、作者、摘要、编辑时间等结构化结果；站内搜索额外返回点赞数和评论数。",
-      "version": "1.1.2",
-      "author": "OpenClaw / VCP",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ZhihuSearch/ZhihuSearch.zip"
-    },
-    {
-      "name": "SciCalculator",
-      "displayName": "科学计算器",
-      "description": "执行数学表达式计算。AI应使用特定格式请求此工具。",
-      "version": "1.1.1",
-      "author": "UserProvided (Adapted by Roo)",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SciCalculator/SciCalculator.zip"
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/NanoBananaGenOR/NanoBananaGenOR.zip"
     },
     {
       "name": "NeteaseMusic",
@@ -596,48 +175,38 @@
       "version": "1.2.0",
       "author": "VCP Team",
       "icon": "extension",
-      "category": "tool",
+      "category": "media-generation",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/NeteaseMusic/NeteaseMusic.zip"
     },
     {
-      "name": "ServerTencentCOSBackup",
-      "displayName": "腾讯云COS备份插件",
-      "description": "一个功能完整的腾讯云对象存储（COS）插件，支持文件上传、下载、复制、移动、删除和列出操作，具有权限控制和自动压缩功能。动态读取config.env中的AGENT_FOLDERS_CONFIG，带有对AGENT_FOLDERS_CONFIG中子文件夹权限的文字描述。",
-      "version": "1.1.1",
-      "author": "VCP Developer",
+      "name": "NovelAIGen",
+      "displayName": "NovelAI 图像生成器 (全能力网关)",
+      "description": "NovelAI 六端点多渠道全参数网关。",
+      "version": "2.1.0",
+      "author": "VCP-Assistant; infinite-vector",
       "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TencentCOSBackup/ServerTencentCOSBackup.zip"
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/NovelAIGen/NovelAIGen.zip"
     },
     {
-      "name": "GuanLan",
-      "displayName": "观澜-A股数据引擎",
-      "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
-      "version": "4.5.0",
-      "author": "观澜 & 冬竹子（翔）",
+      "name": "ObsidianBridge",
+      "displayName": "Obsidian 笔记桥接器",
+      "description": "通过 Obsidian CLI (v1.12+) 桥接 VCP 与 Obsidian 笔记库。支持笔记读写、全文搜索(含上下文)、每日笔记、文件/文件夹浏览、任务管理、反向链接/出站链接查询、标签统计、属性管理、大纲查看、字数统计、模板列表等 22 项基础能力。v1.4.0 新增节点写作模式(node_* 6 命令)：以不可见的 HTML 注释锚点为 Markdown 提供节点级寻址与局部替换能力（Obsidian CLI 本身只有 create/append/prepend，无替换），Agent 侧全程无需接触 HTML。节点模式采用内存节点编译结合 Obsidian CLI 物理提交机制，在保证桌面端 IPC 缓存一致性与历史撤销树完整的前提下，向 Agent 提供稳定确定的局部编辑能力。",
+      "version": "1.4.0",
+      "author": "Nova & 小夜 | 扩展: infinite-vector",
       "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GuanLan/GuanLan.zip"
+      "category": "browser",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ObsidianBridge/ObsidianBridge.zip"
     },
     {
-      "name": "SynchroVision",
-      "displayName": "视界同调 (SynchroVision)",
-      "description": "全面浏览器感知系统：实时页面感知、浏览历史、书签、下载记录、打开标签页、搜索记录（含 ChatGPT/Grok 网页与浏览器 App/PWA 提问轨迹）、系统窗口状态、B站精准历史、AI意图捕获。让Agent完全了解你的上网情况。",
-      "version": "2.0.0",
-      "author": "VCP Team",
+      "name": "PenpotBridge",
+      "displayName": "Penpot 设计桥接器",
+      "description": "VCP <-> Penpot MCP 原生内接桥。Penpot 官方 MCP 只暴露 5 个原始工具且核心是让 LLM 手写 Plugin API 代码，本桥将常用设计操作原生内接为高层命令，Agent 无需先啃 API 文档。exec 保留为逃生舱。",
+      "version": "1.0.0",
+      "author": "ATRI&Lucifer-sakura",
       "icon": "extension",
-      "category": "service",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SynchroVision/SynchroVision.zip"
-    },
-    {
-      "name": "GoogleSearch",
-      "displayName": "谷歌搜索 (API版)",
-      "description": "一个使用Google Custom Search API进行搜索的同步插件。",
-      "version": "2.0.0",
-      "author": "Kilo Code",
-      "icon": "extension",
-      "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/GoogleSearch/GoogleSearch.zip"
+      "category": "browser",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/PenpotBridge/PenpotBridge.zip"
     },
     {
       "name": "Randomness",
@@ -650,14 +219,194 @@
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/Randomness/Randomness.zip"
     },
     {
-      "name": "ProjectAnalyst",
-      "displayName": "项目分析器",
-      "description": "分析指定的项目文件夹，生成详细的分析报告，并支持后续查询分析结果。",
-      "version": "1.0.0",
-      "author": "Roo",
+      "name": "SciCalculator",
+      "displayName": "科学计算器",
+      "description": "执行数学表达式计算。AI应使用特定格式请求此工具。",
+      "version": "1.1.1",
+      "author": "UserProvided (Adapted by Roo)",
       "icon": "extension",
       "category": "tool",
-      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ProjectAnalyst/ProjectAnalyst.zip"
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SciCalculator/SciCalculator.zip"
+    },
+    {
+      "name": "SenseGen",
+      "displayName": "SenseGen 图文文档型图片生成器",
+      "description": "通过 SenseNova 的 sensenova-u1-fast 模型生成适合 PPT、PDF、杂志、信息图、海报等图文并茂风格的高分辨率图片文档。",
+      "version": "1.0.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SenseGen/SenseGen.zip"
+    },
+    {
+      "name": "SerplySearch",
+      "displayName": "Serply 搜索插件",
+      "description": "使用 Serply API 进行网络搜索，返回 Google 搜索结果。AI可以指定搜索查询、返回结果数量、网页或新闻类别、时效范围、国家及语言。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+      "version": "0.1.0",
+      "author": "Serply",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerplySearch/SerplySearch.zip"
+    },
+    {
+      "name": "SerpSearch",
+      "displayName": "Serp API 搜索引擎",
+      "description": "一个使用SerpApi提供多种搜索引擎（如Bing, DuckDuckGo, Google Scholar）的插件。",
+      "version": "1.0.0",
+      "author": "Your Name",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SerpSearch/SerpSearch.zip"
+    },
+    {
+      "name": "SunoGen",
+      "displayName": "Suno AI 音乐生成",
+      "description": "使用 Suno API 生成原创歌曲。支持通过歌词、风格、标题进行自定义创作，或通过描述获取灵感创作，还可以继续生成已有的歌曲片段。",
+      "version": "0.1.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SunoGen/SunoGen.zip"
+    },
+    {
+      "name": "SunoMusicGen",
+      "displayName": "Suno音乐生成器(新API)",
+      "description": "使用新的Suno API(sunoapi.org)生成高质量AI音乐、支持音乐延长和音频处理（异步版本）",
+      "version": "2.2.0",
+      "author": "Ava",
+      "icon": "extension",
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SunoMusicGen/SunoMusicGen.zip"
+    },
+    {
+      "name": "SVCardFinder",
+      "displayName": "影之诗查卡器(WB)",
+      "description": "一个用于查询《影之诗：世界超越》卡牌信息的插件。",
+      "version": "1.0.0",
+      "author": "greyfilm",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SVCardFinder/SVCardFinder.zip"
+    },
+    {
+      "name": "SynBiliVision",
+      "displayName": "B站用户信息综合查询",
+      "description": "获取当前登录 B 站账号的综合信息，包括浏览历史、收藏夹、最近收藏、投币记录和观看偏好分析。",
+      "version": "2.3.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SynBiliVision/SynBiliVision.zip"
+    },
+    {
+      "name": "SynchroVision",
+      "displayName": "视界同调 (SynchroVision)",
+      "description": "全面浏览器感知系统：实时页面感知、浏览历史、书签、下载记录、打开标签页、搜索记录（含 ChatGPT/Grok 网页与浏览器 App/PWA 提问轨迹）、系统窗口状态、B站精准历史、AI意图捕获。让Agent完全了解你的上网情况。",
+      "version": "2.0.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "service",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/SynchroVision/SynchroVision.zip"
+    },
+    {
+      "name": "ServerTencentCOSBackup",
+      "displayName": "腾讯云COS备份插件",
+      "description": "一个功能完整的腾讯云对象存储（COS）插件，支持文件上传、下载、复制、移动、删除和列出操作，具有权限控制和自动压缩功能。动态读取config.env中的AGENT_FOLDERS_CONFIG，带有对AGENT_FOLDERS_CONFIG中子文件夹权限的文字描述。",
+      "version": "1.1.1",
+      "author": "VCP Developer",
+      "icon": "extension",
+      "category": "system-integration",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TencentCOSBackup/ServerTencentCOSBackup.zip"
+    },
+    {
+      "name": "TinyFishBrowser",
+      "displayName": "TinyFish 搜索与网页抓取",
+      "description": "基于 TinyFish API 的搜索与网页内容抓取插件。支持网络搜索（返回结构化结果）和网页内容抓取（真实浏览器渲染，支持JS页面，返回Markdown/HTML/JSON）。",
+      "version": "1.0.0",
+      "author": "VCP Team",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TinyFishBrowser/TinyFishBrowser.zip"
+    },
+    {
+      "name": "TomatoNovel",
+      "displayName": "番茄小说增强器",
+      "description": "提供多功能搜书、全本精准下载、以及极速下载大纲目录等功能。",
+      "version": "1.0.0",
+      "author": "Antigravity",
+      "icon": "extension",
+      "category": "tool",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/TomatoNovel/TomatoNovel.zip"
+    },
+    {
+      "name": "VCPQQBotServer",
+      "displayName": "VCP QQBot 单聊/群聊桥接服务",
+      "description": "常驻连接腾讯 QQBot Gateway，接收 QQ 单聊与群聊 @ 消息后转发到 VCP 主服务器 /v1/chat/completions，并将非流式 AI 回复拆分为 QQ 文本与真正的 QQ 图片消息发回用户。",
+      "version": "0.1.0",
+      "author": "VCPToolBox",
+      "icon": "extension",
+      "category": "service",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPQQBotServer/VCPQQBotServer.zip"
+    },
+    {
+      "name": "WebUIGen",
+      "displayName": "WebUI云算力生图",
+      "description": "调用云算力API生成高质量图像，支持多种模型和自定义参数。支持文生图和Qwen图片编辑。",
+      "version": "1.1.0",
+      "author": "Kilo Code",
+      "icon": "extension",
+      "category": "image-generation",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/WebUIGen/WebUIGen.zip"
+    },
+    {
+      "name": "XiaohongshuFetch",
+      "displayName": "小红书爬虫",
+      "description": "用于抓取小红书图文/视频笔记内容的专属爬虫。",
+      "version": "3.0.0",
+      "author": "VCP",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/XiaohongshuFetch/XiaohongshuFetch.zip"
+    },
+    {
+      "name": "YoucomSearch",
+      "displayName": "You.com 搜索插件",
+      "description": "使用 You.com API 进行网络搜索。AI可以指定搜索查询、返回结果数量、时效范围、国家及语言，获取网页与新闻结果。支持使用 || 分隔多个关键词进行并发搜索，所有结果同时返回。",
+      "version": "0.1.0",
+      "author": "Emos21",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YoucomSearch/YoucomSearch.zip"
+    },
+    {
+      "name": "YoutubeFetch",
+      "displayName": "YouTube 内容获取插件",
+      "description": "YouTube 内容获取插件。基于 YouTube Data API v3 获取视频信息、搜索结果、频道信息、频道投稿、热门视频与评论，并通过 youtube-transcript-api 获取字幕/自动字幕。支持 youtube.com、youtu.be、Shorts、embed、live 链接与直接 videoId。",
+      "version": "1.0.0",
+      "author": "Bocchi777",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YoutubeFetch/YoutubeFetch.zip"
+    },
+    {
+      "name": "YTFetch",
+      "displayName": "YouTube Gemini Fetch",
+      "description": "Use Gemini API to directly read public YouTube URLs and return multimodal video/audio analysis without downloading the video locally.",
+      "version": "0.1.0",
+      "author": "VCP Community",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/YTFetch/YTFetch.zip"
+    },
+    {
+      "name": "ZhihuSearch",
+      "displayName": "知乎搜索插件",
+      "description": "调用知乎开放平台 zhihu_search 与 global_search API 搜索知乎内容，返回面向 AI 阅读的 Markdown content、sources，以及标题、链接、作者、摘要、编辑时间等结构化结果；站内搜索额外返回点赞数和评论数。",
+      "version": "1.1.2",
+      "author": "OpenClaw / VCP",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ZhihuSearch/ZhihuSearch.zip"
     }
   ]
 }

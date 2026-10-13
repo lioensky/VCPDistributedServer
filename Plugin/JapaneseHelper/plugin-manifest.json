@@ -67,7 +67,7 @@
     "invocationCommands": [
       {
         "commandIdentifier": "JapaneseHelperCore",
-        "description": "日语学习主入口。通过 command 指定子功能。\\n\\n参数:\\n- command (字符串, 必需): 功能指令。\\n- text/sentence (字符串, 可选): 句子输入。\\n- word (字符串, 可选): 单词输入。\\n- grammar (字符串, 可选): 指定语法点。\\n- 其他参数按具体 command 传入。\\n\\n支持的 command:\\ntokenize, romanize, convert, normalize,\\nanalyze_sentence, lookup_word, lookup_word_json, add_furigana, conjugate_verb, conjugate_v2,\\njlpt_tag, grammar_explain, grammar_explain_deep, phrase_pattern, pitch_accent,\\nkanji_lookup, particle_check, style_check, style_shift, register_shift, rewrite_sentence,\\nquiz_generate, quiz_check, quiz_check_batch, minimal_pair_quiz,\\nwrongbook_add, wrongbook_list, wrongbook_stats, wrongbook_analyze, wrongbook_recommend, wrongbook_clear,\\nreview_due_list, review_submit, review_stats,\\nstudy_session_start, study_session_submit, progress_report,\\nlexicon_add, lexicon_list, lexicon_reload,\\nresource_status, resource_update, import_export_data, health_check, jlpt_stats。\\\\n结构化扩展：reading_aid_v2 / reading_aid_hybrid（含 oov_drill）。\\n\\n补充说明:\\n- phrase_pattern 支持动态句型规则与部分活用补偿。\\n- review_submit 支持 result=记住/模糊/忘记 语义输入。\\n\\n调用示例:\\ntool_name=JapaneseHelper, command=grammar_explain_deep, grammar=〜とは限らない\\ntool_name=JapaneseHelper, command=review_submit, word=勉強, result=记住\\ntool_name=JapaneseHelper, command=wrongbook_analyze, days=30\\\\ntool_name=JapaneseHelper, command=style_shift, text=彼は来る。彼女は来ます。, target=polite\\\\ntool_name=JapaneseHelper, command=conjugate_v2, verb=行く\\\\ntool_name=JapaneseHelper, command=reading_aid_v2, text=彼女は毎朝公園を走っている。, target_level=N3, oov_limit=5\n\n环境说明:\n- 默认采用 纯Python 配置（禁用 可选情感后端 路径）；情感分析走 hybrid(janome/sudachi) 规则融合。\n新增分层命令:\n- sentence_split\n- reading_enhance\n- syntax_enhance\n- semantic_enhance\n- teaching_assets_status",
+        "description": "日语学习主入口。通过 command 指定子功能。\\n\\n参数:\\n- command (字符串, 必需): 功能指令。\\n- text/sentence (字符串, 可选): 句子输入。\\n- word (字符串, 可选): 单词输入。\\n- grammar (字符串, 可选): 指定语法点。\\n- 其他参数按具体 command 传入。\\n\\n支持的 command:\\ntokenize, romanize, convert, normalize,\\nanalyze_sentence, lookup_word, lookup_word_json, add_furigana, conjugate_verb, conjugate_v2,\\njlpt_tag, grammar_explain, grammar_explain_deep, phrase_pattern, pitch_accent,\\nkanji_lookup, particle_check, style_check, style_shift, register_shift, rewrite_sentence,\\nquiz_generate, quiz_check, quiz_check_batch, minimal_pair_quiz,\\nwrongbook_add, wrongbook_list, wrongbook_stats, wrongbook_analyze, wrongbook_recommend, wrongbook_clear,\\nreview_due_list, review_submit, review_stats,\\nstudy_session_start, study_session_submit, progress_report,\\nlexicon_add, lexicon_list, lexicon_reload,\\nresource_status, resource_update, import_export_data, health_check, jlpt_stats。\n结构化扩展：reading_aid_v2 / reading_aid_hybrid（含 oov_drill）。\\n\\n补充说明:\\n- phrase_pattern 支持动态句型规则与部分活用补偿。\\n- review_submit 支持 result=记住/模糊/忘记 语义输入。\\n\\n调用示例:\\ntool_name=JapaneseHelper, command=grammar_explain_deep, grammar=〜とは限らない\\ntool_name=JapaneseHelper, command=review_submit, word=勉強, result=记住\\ntool_name=JapaneseHelper, command=wrongbook_analyze, days=30\ntool_name=JapaneseHelper, command=style_shift, text=彼は来る。彼女は来ます。, target=polite\ntool_name=JapaneseHelper, command=conjugate_v2, verb=行く\ntool_name=JapaneseHelper, command=reading_aid_v2, text=彼女は毎朝公園を走っている。, target_level=N3, oov_limit=5\n\n环境说明:\n- 默认采用 纯Python 配置（禁用 可选情感后端 路径）；情感分析走 hybrid(janome/sudachi) 规则融合。\n新增分层命令:\n- sentence_split\n- reading_enhance\n- syntax_enhance\n- semantic_enhance\n- teaching_assets_status",
         "example": "tool_name=JapaneseHelper, command=grammar_explain_deep, grammar=〜に違いない"
       },
       {
@@ -119,6 +119,64 @@
         "commandIdentifier": "JapaneseHelperLayeredSuite",
         "description": "六层补齐命令组（纯Python友好）。\n参数:\n- command: sentence_split | reading_enhance | syntax_enhance | semantic_enhance | teaching_assets_status\n- text/sentence/word: 依命令而定\n示例:\ntool_name=JapaneseHelper, command=sentence_split, text=彼女は毎朝公園を走っている。私は新しい語彙を増やしたい！\ntool_name=JapaneseHelper, command=teaching_assets_status",
         "example": "tool_name=JapaneseHelper, command=semantic_enhance, text=今日はとても嬉しいです。"
+      }
+    ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "便利操作",
+    "jevDescPrompt": "提供日语单词查询、假名注音、JLPT 等级辅助阅读与日语句子语法解析。",
+    "jevPrompt": "用户希望查询单个日语词汇释义与读音时选择 JapaneseHelperLookup；希望进行整句阅读辅助、假名注音或句法树解析时选择 JapaneseHelperPhase2。未明确指定时默认 JapaneseHelperLookup。",
+    "agentPrompt": "当需要查询日语单词释义或对日语句子做阅读假名辅助时，使用 {便利操作} 中的 `JapaneseHelper`，将单词或日语句子放入【主要内容】：\nJEV:「始」请使用 {便利操作} 中的 `JapaneseHelper`，查询日语单词【利害関係者】。「末」",
+    "defaultCommand": "JapaneseHelperLookup",
+    "commands": [
+      {
+        "commandIdentifier": "JapaneseHelperLookup",
+        "description": "日语单词词典查询与上下文消歧",
+        "aliases": ["日语查词", "查日语", "单词查询", "查询日语单词"],
+        "parameters": {
+          "word": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 100,
+            "description": "待查询的日语单词"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "JapaneseHelperPhase2",
+        "description": "日语句子阅读辅助与 JLPT 标注",
+        "aliases": ["日语阅读", "阅读辅助", "句子解析", "假名标注"],
+        "parameters": {
+          "text": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "待解析的日语句子或段落"
+          },
+          "target_level": {
+            "type": "enum",
+            "description": "目标 JLPT 能力等级",
+            "values": {
+              "N1": "JLPT N1 高级水平",
+              "N2": "JLPT N2 中高级水平",
+              "N3": "JLPT N3 中级水平",
+              "N4": "JLPT N4 初中级水平",
+              "N5": "JLPT N5 入门水平"
+            },
+            "aliases": {
+              "N1": ["N1", "一级"],
+              "N2": ["N2", "二级"],
+              "N3": ["N3", "三级"],
+              "N4": ["N4", "四级"],
+              "N5": ["N5", "五级"]
+            },
+            "default": "N3"
+          }
+        }
       }
     ]
   }

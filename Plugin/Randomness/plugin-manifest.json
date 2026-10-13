@@ -104,5 +104,63 @@
     "enabled": true,
     "usePluginResultAsMessage": false,
     "messageType": "RandomEventResult"
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "生成可信的 TRPG 复杂公式掷骰检定、塔罗牌阵抽取或卢恩符文占卜。",
+    "jevPrompt": "用户希望执行 TRPG 骰子公式（如 1d100、2d6+5、优势劣势骰）时选择 rollDice；希望抽取塔罗牌时选择 drawTarot；希望抽取北欧卢恩符文时选择 castRunes。未明确指定时默认 rollDice。",
+    "agentPrompt": "当需要执行复杂公式掷骰检定、抽取塔罗牌或卢恩符文时，使用 {媒体娱乐} 中的 `Randomness`，掷骰将公式放入【主要内容】：\nJEV:「始」请使用 {媒体娱乐} 中的 `Randomness`，执行掷骰检定【1d100】。「末」",
+    "defaultCommand": "rollDice",
+    "commands": [
+      {
+        "commandIdentifier": "rollDice",
+        "description": "执行 TRPG 复杂掷骰表达式检定",
+        "aliases": ["掷骰检定", "跑团掷骰", "公式掷骰", "检定"],
+        "parameters": {
+          "diceString": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 100,
+            "description": "TRPG 掷骰表达式（如 1d100, 2d6+5, 1d20adv）"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "drawTarot",
+        "description": "从塔罗牌库中无状态抽取塔罗牌",
+        "aliases": ["抽塔罗", "塔罗抽牌", "随机塔罗"],
+        "parameters": {
+          "spread": {
+            "type": "enum",
+            "description": "塔罗预设牌阵类型",
+            "values": {
+              "single": "单张牌指引",
+              "three_card": "过去-现在-未来三牌阵"
+            },
+            "aliases": {
+              "single": ["单张", "一张"],
+              "three_card": ["三牌阵", "三张", "圣三角"]
+            },
+            "default": "three_card"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "castRunes",
+        "description": "从符文集中抽取北欧卢恩符文",
+        "aliases": ["卢恩符文", "抽符文", "符文占卜"],
+        "parameters": {
+          "count": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["数量", "张数", "颗数"],
+            "maxLength": 2
+          }
+        }
+      }
+    ]
   }
-}
+    }

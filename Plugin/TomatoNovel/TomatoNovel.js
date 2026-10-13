@@ -347,12 +347,12 @@ async function main() {
             if (!query) throw new Error("缺少搜索关键词 'query' 参数。");
             output = await handleSearch(query);
         } else if (action === "download") {
-            const bookId = request.book_id;
+            const bookId = request.book_id || request.query;
             if (!bookId) throw new Error("缺少书籍 ID 'book_id' 参数。");
             // 全本精准下载
             output = await handleDownload(bookId, null, null, false);
         } else if (action === "download_intro") {
-            const bookId = request.book_id;
+            const bookId = request.book_id || request.query;
             if (!bookId) throw new Error("缺少书籍 ID 'book_id' 参数。");
             // 仅下载大纲（指定 range 1-1 并开启 isIntroOnly）
             output = await handleDownload(bookId, 1, 1, true);

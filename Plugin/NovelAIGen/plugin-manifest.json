@@ -221,5 +221,103 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NovelAIGen「末」,\ncommand:「始」subscription「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "调用 NovelAI 二次元图像生成引擎进行文生图、图生图重绘、超分放大、Danbooru 标签建议或查询 Anlas 订阅余额。",
+    "jevPrompt": "用户提供画面描述要求绘制新插画时选 NovelAIGenerate；提供参考图要求重绘时选 NovelAIImg2Img；要求高清放大图片时选 NovelAIUpscale；要求推荐英文画风标签时选 NovelAISuggestTags；要求查看点数余额时选 NovelAISubscription（默认 NovelAIGenerate）。在文生图中，立绘或人像选 832x1216，横屏场景选 1216x832，头像方图选 1024x1024。",
+    "agentPrompt": "当需要使用 NovelAI 绘制二次元插画、放大图片或查询标签时，使用 {媒体娱乐} 中的 `NovelAIGen`，将提示词放入【主要内容】，画幅或负面词放入 []（如 [竖屏]、[横屏]、[负面:lowres]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `NovelAIGen`，绘制【1girl, silver hair, golden eyes, masterpiece】[竖屏]。「末」",
+    "defaultCommand": "NovelAIGenerate",
+    "commands": [
+      {
+        "commandIdentifier": "NovelAIGenerate",
+        "description": "使用 NovelAI 进行二次元文生图创作",
+        "aliases": ["文生图", "绘制", "画图", "生成插画", "NovelAI生图"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1500,
+            "description": "英文 Danbooru 标签或正面提示词"
+          },
+          "resolution": {
+            "type": "enum",
+            "required": false,
+            "description": "NovelAI 标准生成画幅分辨率",
+            "values": {
+              "832x1216": "标准竖屏画幅，适合人物立绘与肖像",
+              "1216x832": "标准横屏画幅，适合风景与宽幅插画",
+              "1024x1024": "标准正方形画幅，适合头像与对称构图"
+            },
+            "aliases": {
+              "832x1216": ["竖屏", "竖版", "立绘", "人像", "832x1216"],
+              "1216x832": ["横屏", "横版", "风景", "壁纸", "1216x832"],
+              "1024x1024": ["方图", "正方形", "头像", "1024x1024"]
+            },
+            "default": "832x1216"
+          },
+          "uc": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["负面", "排除", "uc"],
+            "maxLength": 500
+          }
+        }
+      },
+      {
+        "commandIdentifier": "NovelAIImg2Img",
+        "description": "基于参考图进行二次元图生图重绘",
+        "aliases": ["图生图", "重绘", "垫图"],
+        "parameters": {
+          "image": {
+            "type": "text",
+            "required": true,
+            "source": "url",
+            "maxLength": 500,
+            "description": "输入参考图路径或 URL"
+          },
+          "prompt": {
+            "type": "text",
+            "required": false,
+            "source": "primary",
+            "maxLength": 1000
+          }
+        }
+      },
+      {
+        "commandIdentifier": "NovelAIUpscale",
+        "description": "对图片进行超分辨率高清放大",
+        "aliases": ["放大图片", "高清放大", "超分"],
+        "parameters": {
+          "image": {
+            "type": "text",
+            "required": true,
+            "source": "url",
+            "maxLength": 500
+          }
+        }
+      },
+      {
+        "commandIdentifier": "NovelAISuggestTags",
+        "description": "根据词根推荐 NovelAI 标准英文标签",
+        "aliases": ["标签建议", "推荐标签", "查标签"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 100
+          }
+        }
+      },
+      {
+        "commandIdentifier": "NovelAISubscription",
+        "description": "查询当前 NovelAI 订阅等级与 Anlas 余额",
+        "aliases": ["查询余额", "订阅状态", "Anlas余额"]
+      }
+    ]
   }
 }

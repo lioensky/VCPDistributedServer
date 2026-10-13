@@ -49,6 +49,14 @@ class HybridDispatcher:
         return obj if isinstance(obj, dict) else None
 
     def dispatch(self, args: Dict[str, Any]) -> str:
+        raw_cmd = str(args.get("command", "") or "").strip().lower()
+        cmd_aliases = {
+            "japanesehelperlookup": "lookup_word",
+            "japanesehelperphase2": "reading_aid",
+            "japanesehelpercore": "lookup_word",
+        }
+        if raw_cmd in cmd_aliases:
+            args["command"] = cmd_aliases[raw_cmd]
         command = str(args.get("command", "") or "").strip().lower()
         if self.should_prefer_rust(command):
             rust_result = self.rust.call(args)

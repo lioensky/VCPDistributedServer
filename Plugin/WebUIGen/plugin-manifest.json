@@ -1,9 +1,9 @@
 {
   "manifestVersion": "1.0.0",
   "name": "WebUIGen",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "displayName": "WebUI云算力生图",
-  "description": "调用云算力API生成高质量图像，支持多种模型和自定义参数。",
+  "description": "调用云算力API生成高质量图像，支持多种模型和自定义参数。支持文生图和Qwen图片编辑。",
   "author": "Kilo Code",
   "pluginType": "synchronous",
   "entryPoint": {
@@ -30,8 +30,58 @@
     "invocationCommands": [
       {
         "commandIdentifier": "WebUIGenerate",
-        "description": "调用云算力API生成图像。\n参数:\n- prompt (字符串, 必需): 图像生成提示词。\n- negative_prompt (字符串, 可选): 负面提示词。\n- resolution (字符串, 可选): 分辨率，如 '512x512', '1024x1024', 'landscape', 'portrait'。默认 512x512。\n- steps (整数, 可选): 生成步数 (1-50)，默认 20。注意：模型5(Z-Image)请使用8步。\n- cfg (浮点数, 可选): CFG引导强度 (1-10)，默认 7.0。\n- model_index (整数, 可选): 模型索引，默认 0。\n- seed (整数, 可选): 随机种子，-1为随机，默认 -1。\n- showbase64 (布尔值, 可选): 是否在返回结果中包含base64图片数据，默认为false。\n\n模型列表:\n0: Miaomiao Harem vPred Dogma 1.1\n1: MiaoMiao Pixel 像素 1.0\n2: NoobAIXL V1.1\n3: NoobAIXL V1.0\n4: illustrious_pencil 融合\n5: Z-Image (自然语言文生图，步数请改成8步)\n6: MiaoMiao RealSkin EPS 1.3\n7: Newbie exp 0.1\n8: Newbie exp 0.1 (服务器2)\n9: MiaoMiao RealSkin vPred 1.1\n10: MiaoMiao RealSkin vPred 1.0\n11: Wainsfw illustrious v16\n12: Wainsfw illustrious v15\n13: MiaoMiao Harem 1.75\n14: MiaoMiao Harem 1.6G\n15: Wainsfw Illustrious v13 (服务器1)\n16: Wainsfw Illustrious v13 (服务器2)\n17: Wainsfw Illustrious v11\n18: 真人模型 Nsfw-Real\n\n调用格式:\n",
-        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」WebUIGen「末」,\nprompt:「始」a beautiful anime girl, detailed face, high quality「末」,\nnegative_prompt:「始」blurry, low quality, distorted「末」,\nresolution:「始」512x512「末」,\nmodel_index:「始」0「末」\n<<<[END_TOOL_REQUEST]>>>"
+        "description": "调用云算力API生成图像。\n参数:\n- prompt (字符串, 必需): 图像生成提示词。\n- negative_prompt (字符串, 可选): 负面提示词。\n- resolution (字符串, 可选): 分辨率，如 '512x512', '1024x1024', 'landscape', 'portrait'。默认 512x512。\n- steps (整数, 可选): 生成步数 (1-50)，默认 20。\n- cfg (浮点数, 可选): CFG引导强度 (1-10)，默认 7.0。\n- model_index (整数, 可选): 模型索引，默认 0。\n- seed (整数, 可选): 随机种子，-1为随机，默认 -1。\n- showbase64 (布尔值, 可选): 是否在返回结果中包含base64图片数据，默认为false。\n- image_source (字符串, 特殊): 仅Qwen Image Edit模型(index 18/19)需要，提供可访问的原始图片URL。\n\n模型列表 (2026-05-15更新):\n0: Miaomiao Harem vPred Dogma 1.1\n1: MiaoMiao Pixel 像素 1.0\n2: NoobAIXL V1.1\n3: illustrious_pencil 融合\n4: [全新模型] one_obsession\n5: MiaoMiao RealSkin EPS 1.3\n6: Newbie exp 0.1\n7: Newbie exp 0.1 (服务器2)\n8: MiaoMiao RealSkin vPred 1.1\n9: MiaoMiao RealSkin vPred 1.0\n10: Wainsfw illustrious v16 ✓已验证可用\n11: Wainsfw illustrious v15\n12: MiaoMiao Harem 1.75\n13: MiaoMiao Harem 1.6G\n14: (testa)服务器1 Wainsfw Illustrious v13\n15: [维护]服务器2 Wainsfw Illustrious v13\n16: [维护]Wainsfw Illustrious v11\n17: (testa)真人模型 Nsfw-Real\n18: Qwen Image Edit版 (需image_source参数)\n19: Qwen Image Edit2511版\n\n⚠️ 注意：部分模型可能处于维护状态，推荐使用 index 10 (Wainsfw v16)。\n\n调用格式:\n",
+        "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」WebUIGen「末」,\nprompt:「始」a beautiful anime girl, detailed face, high quality「末」,\nnegative_prompt:「始」blurry, low quality, distorted「末」,\nresolution:「始」512x768「末」,\nmodel_index:「始」10「末」\n<<<[END_TOOL_REQUEST]>>>"
+      }
+    ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "调用 Stable Diffusion WebUI 云算力 API 生成高质量二次元与写实图像。",
+    "jevPrompt": "根据用户的画幅比例需求选择 resolution 分辨率：正方形选 512x512 或 1024x1024；竖版立绘选 512x768；横屏风景选 768x512。未指明时默认 512x768（二次元立绘最常用画幅）。",
+    "agentPrompt": "当需要使用 WebUI 算力平台生成二次元图像时，使用 {媒体娱乐} 中的 `WebUIGen`，提示词放入【主要内容】，画幅与负面词放入 []（如 [竖屏]、[横屏]、[负面:blurry]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `WebUIGen`，生成插画【a beautiful anime girl, detailed face, high quality】[竖屏]。「末」",
+    "defaultCommand": "WebUIGenerate",
+    "commands": [
+      {
+        "commandIdentifier": "WebUIGenerate",
+        "description": "调用 WebUI 算力生成图像",
+        "aliases": ["WebUI生图", "云算力生图", "SD生图", "WebUI画图"],
+        "injectCommand": false,
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1200,
+            "description": "图像生成正面提示词"
+          },
+          "resolution": {
+            "type": "enum",
+            "required": false,
+            "description": "WebUI 生成图像分辨率",
+            "values": {
+              "512x768": "标准二次元竖屏立绘分辨率",
+              "768x512": "标准横屏风景分辨率",
+              "512x512": "标准正方形分辨率",
+              "1024x1024": "高清大正方形分辨率"
+            },
+            "aliases": {
+              "512x768": ["竖屏", "竖版", "立绘", "512x768"],
+              "768x512": ["横屏", "横版", "风景", "768x512"],
+              "512x512": ["方图", "正方形", "512x512"],
+              "1024x1024": ["高清方图", "1024x1024", "大方图"]
+            },
+            "default": "512x768"
+          },
+          "negative_prompt": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["负面", "排除"],
+            "maxLength": 500
+          }
+        }
       }
     ]
   }

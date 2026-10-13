@@ -88,5 +88,61 @@
         "example": "<<<[TOOL_REQUEST]>>>\\ntool_name:「始」LexibankOperator「末」,\\ncommand:「始」JevRoute「末」,\\nquery:「始」日耳曼语系里 water 的同源词音变路径「末」,\\nmode:「始」full「末」,\\nk:「始」10「末」,\\nlimit:「始」50「末」\\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "基于全球 Lexibank² 数据库进行跨语系词源追溯、同源词对比与音标概念查询。",
+    "jevPrompt": "用户以自然语言询问跨语系词源或音变规律时选择 JevRoute；按基础概念英语词检索各国词形时选择 concept_lookup；追溯特定单词同源分布时选择 cognate_trace；查看索引状态时选择 status。默认选择 JevRoute。",
+    "agentPrompt": "当需要查询全球语言词源、同源词音变或跨语系词汇对比时，使用 {信息获取} 中的 `LexibankOperator`，查询问题或概念放入【主要内容】：\nJEV:「始」请使用 {信息获取} 中的 `LexibankOperator`，追溯【印欧语系中 water 的同源词与音变规律】。「末」",
+    "defaultCommand": "JevRoute",
+    "commands": [
+      {
+        "commandIdentifier": "JevRoute",
+        "description": "自然语言跨语系词源与音系智能路由检索",
+        "aliases": ["词源追溯", "同源词查询", "语言学检索", "跨语系查询"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 300,
+            "description": "语言学词源或同源词自然语言查询"
+          },
+          "family": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["语系", "family"],
+            "maxLength": 60
+          }
+        }
+      },
+      {
+        "commandIdentifier": "concept_lookup",
+        "description": "按基础概念检索全球语言的词形与音标",
+        "aliases": ["概念查词", "概念检索", "查概念"],
+        "parameters": {
+          "concept": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 100,
+            "description": "基础概念英文词（如 water, fire, sun）"
+          },
+          "family": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["语系", "family"],
+            "maxLength": 60
+          }
+        }
+      },
+      {
+        "commandIdentifier": "status",
+        "description": "查看 Lexibank 索引库就绪状态",
+        "aliases": ["词库状态", "索引状态"]
+      }
+    ]
   }
 }

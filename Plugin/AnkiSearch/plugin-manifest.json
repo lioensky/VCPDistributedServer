@@ -51,8 +51,39 @@
       },
       {
         "command": "anki_get_models",
+        "commandIdentifier": "anki_get_models",
         "description": "获取所有笔记类型（Model）及其字段结构。",
         "args": []
+      }
+    ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "便利操作",
+    "jevDescPrompt": "检索本地 Anki 知识库中的记忆卡片、查看所有牌组的学习统计数据与到期卡片。",
+    "jevPrompt": "用户希望按条件搜索卡片或复习内容时选择 anki_search_cards；希望查看牌组列表与今日待复习统计时选择 anki_get_decks。未特别指明动作时默认 anki_get_decks。",
+    "agentPrompt": "当需要查询 Anki 记忆卡片或查看今日到期牌组统计时，使用 {便利操作} 中的 `AnkiSearch`，查看牌组直接调用，搜索卡片将语法放入【主要内容】：\nJEV:「始」请使用 {便利操作} 中的 `AnkiSearch`，搜索卡片【deck:默认 is:due】。「末」",
+    "defaultCommand": "anki_get_decks",
+    "commands": [
+      {
+        "commandIdentifier": "anki_get_decks",
+        "description": "获取所有 Anki 牌组列表及其学习统计信息",
+        "aliases": ["牌组列表", "牌组统计", "所有牌组", "获取牌组"]
+      },
+      {
+        "commandIdentifier": "anki_search_cards",
+        "description": "使用 Anki 查询语法搜索卡片",
+        "aliases": ["搜卡片", "搜索卡片", "查找卡片", "查询卡片"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 200,
+            "description": "Anki 查询语句（如 deck:默认 is:due）"
+          }
+        }
       }
     ]
   }

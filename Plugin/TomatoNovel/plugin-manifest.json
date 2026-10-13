@@ -44,5 +44,47 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」TomatoNovel「末」,\naction:「始」download_intro「末」,\nbook_id:「始」7580018670118652952「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "在番茄小说库中按书名或设定搜索网文书籍、提取小说简介与章节大纲目录，或下载全本 EPUB。",
+    "jevPrompt": "根据用户的网文操作意图裁决 action：按关键词或题材找书选 search；仅提取书籍首页简介与章节大纲目录选 download_intro；下载整本小说选 download（默认 search）。",
+    "agentPrompt": "当需要在番茄小说搜书或提取小说大纲目录时，使用 {媒体娱乐} 中的 `TomatoNovel`，书名或书籍 ID 放入【主要内容】，动作放入 []（[搜书]、[提取大纲]、[下载全本]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `TomatoNovel`，[搜书]【序列公路】。「末」",
+    "defaultCommand": "TomatoNovel",
+    "commands": [
+      {
+        "commandIdentifier": "TomatoNovel",
+        "description": "番茄小说搜索、大纲提取与全本下载",
+        "aliases": ["番茄小说", "搜小说", "查网文", "小说大纲"],
+        "injectCommand": false,
+        "parameters": {
+          "action": {
+            "type": "enum",
+            "required": true,
+            "description": "番茄小说操作类型",
+            "values": {
+              "search": "按关键词、主角或题材搜索小说",
+              "download_intro": "极速提取指定书籍的简介与章节目录大纲",
+              "download": "下载指定书籍的全本解密 EPUB 文件"
+            },
+            "aliases": {
+              "search": ["搜书", "搜索小说", "找书", "搜网文"],
+              "download_intro": ["提取大纲", "下载大纲", "小说简介", "目录大纲"],
+              "download": ["下载全本", "全本下载", "下载小说"]
+            },
+            "default": "search"
+          },
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 200,
+            "description": "搜索关键词或书籍 book_id"
+          }
+        }
+      }
+    ]
   }
 }

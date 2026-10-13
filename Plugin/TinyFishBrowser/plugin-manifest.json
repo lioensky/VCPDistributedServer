@@ -97,5 +97,76 @@
   },
   "compatibility": {
     "nodeVersion": ">=14.0.0"
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "使用 TinyFish 进行网络搜索并支持真实无头浏览器渲染抓取 JavaScript 动态网页为 Markdown 内容。",
+    "jevPrompt": "用户要求搜索网络资讯时选 TinyFishSearch；提供网页 URL 要求抓取动态内容或阅读 JavaScript 渲染页面时选 TinyFishFetch（默认 TinyFishSearch）。在 TinyFishSearch 中可在 [] 中指定国家地区代码（如 [国家:CN]）或语言（如 [语言:zh]）；在 TinyFishFetch 中可选输出格式 [格式:markdown]、[格式:html]、[格式:json]。",
+    "agentPrompt": "当需要抓取 JS 动态网页或执行网络搜索时，使用 {信息获取} 中的 `TinyFishBrowser`：\nJEV:「始」请使用 {信息获取} 中的 `TinyFishBrowser`，抓取网页【https://docs.tinyfish.ai】[格式:markdown]。「末」",
+    "defaultCommand": "TinyFishSearch",
+    "commands": [
+      {
+        "commandIdentifier": "TinyFishSearch",
+        "description": "使用 TinyFish 搜索网络并返回结构化结果",
+        "aliases": ["搜索", "网络搜索", "网页搜索", "检索", "搜网"],
+        "parameters": {
+          "q": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1000,
+            "description": "搜索关键词"
+          },
+          "location": {
+            "type": "text",
+            "required": false,
+            "source": "constraints",
+            "prefixes": ["国家", "地区", "位置"],
+            "maxLength": 20,
+            "description": "地理定位国家代码（如 CN, US, JP）"
+          },
+          "language": {
+            "type": "text",
+            "required": false,
+            "source": "constraints",
+            "prefixes": ["语言"],
+            "maxLength": 20,
+            "description": "语言代码（如 zh, en, ja）"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "TinyFishFetch",
+        "description": "使用真实浏览器渲染抓取 JS 动态页面并转为 Markdown 内容",
+        "aliases": ["抓取", "网页抓取", "动态抓取", "渲染抓取", "阅读网页", "抓网页"],
+        "parameters": {
+          "urls": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1000,
+            "description": "要抓取的网页 URL"
+          },
+          "format": {
+            "type": "enum",
+            "required": false,
+            "description": "输出格式",
+            "values": {
+              "markdown": "干净的 Markdown 文档",
+              "html": "语义化 HTML 内容",
+              "json": "结构化文档树"
+            },
+            "aliases": {
+              "markdown": ["md", "markdown", "Markdown"],
+              "html": ["html", "HTML", "网页"],
+              "json": ["json", "JSON", "结构化"]
+            },
+            "default": "markdown"
+          }
+        }
+      }
+    ]
   }
 }

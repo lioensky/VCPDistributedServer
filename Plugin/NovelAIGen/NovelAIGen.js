@@ -4,7 +4,7 @@
  * 版本: 2.1.0
  * 职责: NovelAI 六端点多渠道、全参数网关。
  * 作者: VCP-Assistant
- * 重构: CodeCC & infinite-vector
+ * 重构: infinite-vector
  */
 import axios from "axios";
 import fs from "fs/promises";
@@ -1224,6 +1224,17 @@ async function main() {
     if (!CHANNELS.length)
       throw new Error("未配置 NOVELAI_API_KEY 或有效的多渠道");
     const showBase64 = args.showbase64 === "true" || args.showbase64 === true;
+    const commandAliasMap = {
+      NovelAIGenerate: "generate",
+      NovelAIImg2Img: "img2img",
+      NovelAIInpaint: "inpaint",
+      NovelAIUpscale: "upscale",
+      NovelAIAugment: "augment",
+      NovelAIEncodeVibe: "encode_vibe",
+      NovelAISuggestTags: "suggest_tags",
+      NovelAISubscription: "subscription"
+    };
+    const resolvedCommand = commandAliasMap[args.command] || args.command;
     const handlers = {
       generate: handleGenerate,
       img2img: handleImg2Img,
@@ -1234,11 +1245,12 @@ async function main() {
       suggest_tags: handleSuggestTags,
       subscription: handleSubscription,
     };
-    if (!handlers[args.command]) throw new Error(`未知命令 ${args.command}`);
+    if (!handlers[resolvedCommand]) throw new Error(`未知命令 ${args.command}`);
     outputAndExit({
       status: "success",
-      result: await handlers[args.command](args, showBase64),
+      result: await handlers[resolvedCommand](args, showBase64),
     });
+    return;
   } catch (error) {
     let text = error.message || String(error);
     if (error.response?.data)
