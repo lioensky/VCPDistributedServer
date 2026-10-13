@@ -51,5 +51,90 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」YoutubeFetch「末」,\naction:「始」transcript「末」,\nurl:「始」https://www.youtube.com/watch?v=dQw4w9WgXcQ「末」,\nlang:「始」en「末」,\nformat:「始」merged「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "获取 YouTube 视频详情、字幕文本、热门榜单或搜索相关视频与频道投稿。",
+    "jevPrompt": "用户希望提取视频字幕或文稿时选择 YoutubeTranscript；希望获取视频详情、播放数据或简介时选择 YoutubeFetch；希望按关键词搜索视频时选择 YoutubeSearch；希望获取热门推荐时选择 YoutubeTrending。未明确指定动作时默认 YoutubeFetch。",
+    "agentPrompt": "当需要获取 YouTube 视频信息、提取视频字幕或搜索油管内容时，使用 {信息获取} 中的 `YoutubeFetch`，将视频链接放入【主要内容】，语言或条数放入 []：\nJEV:「始」请使用 {信息获取} 中的 `YoutubeFetch`，提取视频【https://www.youtube.com/watch?v=...】的[中文字幕]。「末」",
+    "defaultCommand": "YoutubeFetch",
+    "commands": [
+      {
+        "commandIdentifier": "YoutubeFetch",
+        "description": "获取 YouTube 视频详细元数据与字幕",
+        "aliases": ["视频详情", "视频信息", "油管视频", "获取视频"],
+        "parameters": {
+          "url": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "YouTube 视频 URL 或 11 位 videoId"
+          },
+          "lang": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["字幕语言", "语言", "语种"],
+            "maxLength": 20
+          }
+        }
+      },
+      {
+        "commandIdentifier": "YoutubeTranscript",
+        "description": "高级字幕与逐字稿提取",
+        "aliases": ["提取字幕", "视频字幕", "字幕文稿", "逐字稿"],
+        "fixedArgs": {
+          "action": "transcript"
+        },
+        "parameters": {
+          "url": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "待提取字幕的 YouTube 视频 URL"
+          },
+          "format": {
+            "type": "enum",
+            "description": "字幕输出排版格式",
+            "values": {
+              "merged": "合并为流畅纯文本段落",
+              "timestamped": "带时间戳的逐句对齐格式",
+              "raw": "原始 JSON 字幕结构"
+            },
+            "aliases": {
+              "merged": ["纯文本", "段落", "合并"],
+              "timestamped": ["时间戳", "带时间", "逐句"]
+            },
+            "default": "merged"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "YoutubeSearch",
+        "description": "关键词搜索 YouTube 视频",
+        "aliases": ["搜索视频", "油管搜索", "视频搜索"],
+        "fixedArgs": {
+          "action": "search"
+        },
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 300,
+            "description": "YouTube 搜索关键词"
+          },
+          "max_results": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
+      }
+    ]
   }
 }

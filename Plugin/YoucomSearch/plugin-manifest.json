@@ -25,5 +25,56 @@
         "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」YoucomSearch「末」,\nquery:「始」最近一周的AI技术进展「末」,\ncount:「始」5「末」,\nfreshness:「始」week「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "使用 You.com 搜索 API 进行国际网络资讯检索与新闻聚合。",
+    "jevPrompt": "根据用户对结果时效性的意图裁决 freshness 枚举：要求最近一天或当天资讯选 day；要求最近一周选 week；要求最近一月选 month；要求最近一年选 year；未明确要求时效时选择 all。",
+    "agentPrompt": "当需要通过 You.com 检索国际互联网资讯与新闻时，使用 {信息获取} 中的 `YoucomSearch`，关键词放入【主要内容】，时效约束放入 []：\nJEV:「始」请使用 {信息获取} 中的 `YoucomSearch`，检索【AGI前沿论文】，限定[最近一周]。「末」",
+    "defaultCommand": "YoucomSearch",
+    "commands": [
+      {
+        "commandIdentifier": "YoucomSearch",
+        "description": "执行 You.com 综合网络搜索",
+        "aliases": ["You搜索", "Youcom", "优搜"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "网络检索关键词"
+          },
+          "freshness": {
+            "type": "enum",
+            "required": false,
+            "description": "搜索结果发布时效范围",
+            "values": {
+              "day": "最近24小时内新鲜资讯",
+              "week": "最近一周内发布的资讯",
+              "month": "最近一月内发布的资讯",
+              "year": "最近一年内发布的资讯",
+              "all": "不限发布时间（全部历史结果）"
+            },
+            "aliases": {
+              "day": ["一天内", "24小时", "今日", "最新"],
+              "week": ["一周内", "最近一周", "本周"],
+              "month": ["一月内", "最近一月", "本月"],
+              "year": ["一年内", "最近一年", "本年"],
+              "all": ["不限", "全部"]
+            },
+            "default": "all"
+          },
+          "count": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
+      }
+    ]
   }
 }

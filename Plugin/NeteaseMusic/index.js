@@ -715,7 +715,7 @@ async function main() {
             switch (action) {
                 case 'search': {
                     const searchRes = await callApi(api.cloudsearch, {
-                        keywords: args.keywords,
+                        keywords: args.keywords || args.keyword || args.query,
                         type: args.type || 1,
                         limit: Math.min(args.limit || 30, 100),
                         offset: args.offset || 0,

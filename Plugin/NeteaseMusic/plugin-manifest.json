@@ -28,5 +28,59 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」NeteaseMusic「末」\naction:「始」song_info「末」\nshareText:「始」分享Neuro-sama/Evil Neuro的单曲《NEVER (feat. Evil Neuro)》: https://163cn.tv/7mipOKo「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "使用网易云音乐搜索歌曲、获取每日推荐歌单、查询歌词、解析分享短链或查看近期听歌画像。",
+    "jevPrompt": "根据用户的音乐操作意图裁决 action 枚举：按歌名或歌手搜索音乐选 search；获取今日个性化每日推荐歌曲选 daily_recommend；查看最近听歌记录选 recent_songs；查看听歌排行选 top_songs；获取歌曲歌词选 lyric；解析网易云分享链接或查询单曲详情选 song_info。未明确指定时默认 search。",
+    "agentPrompt": "当需要在网易云音乐搜歌、查看每日推荐或查询歌词时，使用 {媒体娱乐} 中的 `NeteaseMusic`，歌名或链接放入【主要内容】，动作放入 []（如 [搜索歌曲]、[每日推荐]、[获取歌词]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `NeteaseMusic`，[搜索歌曲]【晴天 周杰伦】。「末」",
+    "defaultCommand": "NeteaseMusic",
+    "commands": [
+      {
+        "commandIdentifier": "NeteaseMusic",
+        "description": "执行网易云音乐搜索、推荐与歌曲信息查询",
+        "aliases": ["网易云", "网易云音乐", "搜歌", "音乐查询"],
+        "injectCommand": false,
+        "parameters": {
+          "action": {
+            "type": "enum",
+            "required": true,
+            "description": "网易云音乐具体功能动作",
+            "values": {
+              "search": "按关键词搜索歌曲、歌手或专辑",
+              "daily_recommend": "获取今日个性化每日推荐歌曲列表",
+              "recent_songs": "查询最近播放的听歌记录",
+              "top_songs": "查询用户听歌次数排行榜",
+              "lyric": "获取指定歌曲的歌词文本",
+              "song_info": "解析分享链接或获取单曲完整详情"
+            },
+            "aliases": {
+              "search": ["搜索歌曲", "搜歌", "找歌", "搜索音乐"],
+              "daily_recommend": ["每日推荐", "日推", "今日推荐"],
+              "recent_songs": ["最近播放", "最近听歌", "听歌记录"],
+              "top_songs": ["听歌排行", "排行榜"],
+              "lyric": ["获取歌词", "查歌词", "歌词"],
+              "song_info": ["歌曲详情", "解析分享", "单曲信息"]
+            },
+            "default": "search"
+          },
+          "keywords": {
+            "type": "text",
+            "required": false,
+            "source": "primary",
+            "maxLength": 200,
+            "description": "搜索关键词（歌名、歌手或歌词片段）"
+          },
+          "id": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["歌曲ID", "id", "ID"],
+            "maxLength": 40
+          }
+        }
+      }
+    ]
   }
 }

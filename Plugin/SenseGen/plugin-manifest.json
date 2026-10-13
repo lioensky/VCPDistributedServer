@@ -25,5 +25,46 @@
         "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」SenseGen「末」,\ncommand:「始」SenseGenerateDocumentImage「末」,\nprompt:「始」制作一张 16:9 的高质量信息图海报，主题是“AI 时代的个人知识管理系统”。要求包含主标题、副标题、三栏结构、流程箭头、卡片式模块、柔和蓝紫色科技风、简洁图标，并把每个模块的说明文字直接排版在画面中。左栏介绍输入源，中栏介绍处理流程，右栏介绍输出成果。整体风格像高端演示文稿封面与内容页的结合。「末」,\nsize:「始」2752x1536「末」,\nshowbase64:「始」true「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "使用商汤 SenseNova 图像模型生成图文并茂的 16:9 信息图海报、PPT 演示单页、知识卡片或流程图视觉文档。",
+    "jevPrompt": "根据用户的排版用途选择画幅尺寸 size：PPT 演示页、宽幅信息图选 2752x1536；手机端长图海报、竖版知识卡选 1536x2752；方形社交媒体图文卡选 2048x2048。未明确指明时默认选 2752x1536。",
+    "agentPrompt": "当需要制作图文并茂的信息图海报、PPT 风格单页或知识图解卡片时，使用 {媒体娱乐} 中的 `SenseGen`，将包含标题层级与版式结构的完整描述放入【主要内容】，版式方向放入 []（[横版PPT]、[竖版海报]、[方图]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `SenseGen`，生成信息图【主题：浪潮V10拓扑语义动力学架构，三栏排版，深邃蓝金配色】[横版PPT]。「末」",
+    "defaultCommand": "SenseGenerateDocumentImage",
+    "commands": [
+      {
+        "commandIdentifier": "SenseGenerateDocumentImage",
+        "description": "生成高分辨率图文排版海报或 PPT 视觉页",
+        "aliases": ["生成信息图", "制作海报", "生成PPT页", "知识卡片"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1800,
+            "description": "包含文案标题、栏目结构与视觉风格的详细排版提示词"
+          },
+          "size": {
+            "type": "enum",
+            "required": false,
+            "description": "图文海报输出分辨率",
+            "values": {
+              "2752x1536": "16:9 宽屏超清画幅，适合 PPT 演示页与横版信息图",
+              "1536x2752": "9:16 竖屏超清画幅，适合移动端展板与竖版海报",
+              "2048x2048": "1:1 正方形超清画幅，适合知识图谱卡片"
+            },
+            "aliases": {
+              "2752x1536": ["横版PPT", "横屏", "16:9", "宽屏海报", "2752x1536"],
+              "1536x2752": ["竖版海报", "竖屏", "9:16", "长图", "1536x2752"],
+              "2048x2048": ["方图", "正方形", "1:1", "知识卡", "2048x2048"]
+            },
+            "default": "2752x1536"
+          }
+        }
+      }
+    ]
   }
 }

@@ -60,5 +60,69 @@
     "messageType": "music_generation_status",
     "usePluginResultAsMessage": true,
     "targetClientType": "VCPLog"
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "使用新版 Suno V5/V4 异步音乐大模型创作歌曲或纯音乐伴奏，或查询音乐任务生成状态。",
+    "jevPrompt": "用户提供音乐描述或歌词要求创作音乐时选择 submit；提供 taskId 要求查询生成进度时选择 query（默认 submit）。在 submit 中，若要求纯音乐或伴奏则 instrumental 裁决为真，要求有人声演唱则裁决为假（默认假）；模型默认选最新 V5。",
+    "agentPrompt": "当需要使用新版 Suno V5 异步生成音乐或查询任务状态时，使用 {媒体娱乐} 中的 `SunoMusicGen`，音乐描述或 taskId 放入【主要内容】，伴奏或版本放入 []（[纯音乐]、[有人声]、[V5]、[V4]）：\nJEV:「始」请使用 {媒体娱乐} 中的 `SunoMusicGen`，创作音乐【一首宁静的钢琴与大提琴合奏曲，适合深夜阅读】[纯音乐][V5]。「末」",
+    "defaultCommand": "submit",
+    "commands": [
+      {
+        "commandIdentifier": "submit",
+        "description": "提交 Suno 异步音乐生成任务",
+        "aliases": ["创作音乐", "生成音乐", "写歌", "提交音乐"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1500,
+            "description": "音乐风格描述或歌词内容"
+          },
+          "instrumental": {
+            "type": "boolean",
+            "required": false,
+            "description": "是否为不含人声的纯音乐伴奏",
+            "trueAliases": ["纯音乐", "伴奏", "无歌词", "纯乐器", "轻音乐"],
+            "falseAliases": ["有人声", "带人声", "人声演唱"],
+            "default": false
+          },
+          "model": {
+            "type": "enum",
+            "required": false,
+            "description": "Suno 音乐生成模型版本",
+            "values": {
+              "V5": "Suno V5 最新旗舰音乐模型",
+              "V4_5": "Suno V4.5 长时长智能模型",
+              "V4": "Suno V4 经典人声模型",
+              "V3_5": "Suno V3.5 均衡模型"
+            },
+            "aliases": {
+              "V5": ["V5", "v5", "最新版"],
+              "V4_5": ["V4.5", "v4.5", "V4_5"],
+              "V4": ["V4", "v4"],
+              "V3_5": ["V3.5", "v3.5", "V3_5"]
+            },
+            "default": "V5"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "query",
+        "description": "查询指定 taskId 的音乐生成状态",
+        "aliases": ["查询进度", "音乐状态", "查询结果", "查任务"],
+        "parameters": {
+          "taskId": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 100
+          }
+        }
+      }
+    ]
   }
 }

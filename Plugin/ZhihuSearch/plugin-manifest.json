@@ -50,6 +50,51 @@
       }
     ]
   },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "检索知乎站内精选问答、专栏文章或全网综合讨论与深度观点。",
+    "jevPrompt": "用户希望查询知乎原生问答、深度讨论或站内热议时，search_type 裁决为 zhihu_search；若希望跨网全域检索或获取更广范围的互联网资讯时，search_type 裁决为 global_search；未特别指明时默认 zhihu_search。",
+    "agentPrompt": "当需要查询知乎社区的专业回答、知乎专栏或深度探讨时，使用 {信息获取} 中的 `ZhihuSearch`，将检索主题放入【主要内容】，在 [] 中可注明 [知乎站内] 或 [全网]：\nJEV:「始」请使用 {信息获取} 中的 `ZhihuSearch`，在知乎上搜索【大语言模型在数学证明中的最新进展】并限定[知乎站内]。「末」",
+    "defaultCommand": "ZhihuSearch",
+    "commands": [
+      {
+        "commandIdentifier": "ZhihuSearch",
+        "description": "搜索知乎站内或全局相关内容与深度问答",
+        "aliases": ["知乎搜索", "搜知乎", "知乎问答", "知乎文章"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 300,
+            "description": "知乎搜索关键词或问题主题"
+          },
+          "search_type": {
+            "type": "enum",
+            "required": false,
+            "description": "知乎搜索作用域（站内问答或全网检索）",
+            "values": {
+              "zhihu_search": "知乎站内精选问答、专栏与讨论",
+              "global_search": "全网跨域综合检索与外部资讯聚合"
+            },
+            "aliases": {
+              "zhihu_search": ["站内", "知乎站内", "知乎问答", "精选问答"],
+              "global_search": ["全局", "全网", "全网搜索", "全域检索"]
+            },
+            "default": "zhihu_search"
+          },
+          "count": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
+      }
+    ]
+  },
   "dependencies": {
     "pip": [],
     "system": []

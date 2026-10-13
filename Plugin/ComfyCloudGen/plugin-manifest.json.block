@@ -36,5 +36,42 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」ComfyCloudGen「末」,\ncommand:「始」GenerateImage「末」,\nprompt:「始」a beautiful anime girl with pink hair, masterpiece quality「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "通过 Comfy Cloud 云端高算力 GPU 生成图像，自动匹配生态与最佳生成参数。",
+    "jevPrompt": "用户要求使用云端 Comfy GPU 生图时选择 GenerateImage。支持通过 [] 指定模板名称或模型名称；未指明时走 auto 自动匹配模式。",
+    "agentPrompt": "当需要使用 Comfy Cloud 云端算力生成高质量图像时，使用 {媒体娱乐} 中的 `ComfyCloudGen`，画面描述放入【主要内容】，模板或负面词放入 []：\nJEV:「始」请使用 {媒体娱乐} 中的 `ComfyCloudGen`，生成图像【a beautiful anime girl with pink hair, masterpiece】[负面:blurry]。「末」",
+    "defaultCommand": "GenerateImage",
+    "commands": [
+      {
+        "commandIdentifier": "GenerateImage",
+        "description": "调用 Comfy Cloud 云端 GPU 生成高质量图像",
+        "aliases": ["云端生图", "Comfy云端", "ComfyCloud", "云端画图"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1500,
+            "description": "英文正面提示词"
+          },
+          "negative_prompt": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["负面", "排除"],
+            "maxLength": 500
+          },
+          "workflow": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["工作流", "模板"],
+            "maxLength": 80
+          }
+        }
+      }
+    ]
   }
 }

@@ -40,5 +40,30 @@
         "example": "<<<[TOOL_REQUEST]>>>\ntool_name:「始」DomainSafetyChecker「末」,\ntarget:「始」https://example.com「末」,\nfetchScripts:「始」false「末」,\ntimeout:「始」12「末」,\nincludeJson:「始」true「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "核查网址链接或域名的安全性，排查钓鱼伪造、恶意跳转、证书异常与安全信誉。",
+    "jevPrompt": "待检测的目标链接或域名直接从 primary 或 url 槽位中提取；无需枚举裁决，原样传入用户提供的网址。",
+    "agentPrompt": "当需要核查陌生网址、疑似钓鱼网站或短链接的安全性时，使用 {信息获取} 中的 `DomainSafetyChecker`，将目标网址放入【主要内容】或 [URL] 中：\nJEV:「始」请使用 {信息获取} 中的 `DomainSafetyChecker`，核查链接【https://example-phishing.com】的安全性。「末」",
+    "defaultCommand": "CheckUrlSafety",
+    "commands": [
+      {
+        "commandIdentifier": "CheckUrlSafety",
+        "description": "执行域名与网址低交互安全初筛与风险评估",
+        "aliases": ["查链接安全", "域名安全", "网址检测", "安全核查", "防钓鱼"],
+        "parameters": {
+          "url": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "待核查安全性的目标网址或域名"
+          }
+        }
+      }
+    ]
   }
 }

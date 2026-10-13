@@ -40,5 +40,37 @@
     "messageType": "video_generation_status",
     "usePluginResultAsMessage": true,
     "targetClientType": "VCPLog"
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "媒体娱乐",
+    "jevDescPrompt": "使用 Grok 视频模型根据文本提示词或参考图片生成动态视频。",
+    "jevPrompt": "用户要求使用 Grok 生成视频时选择 submit 命令。提示词作为 prompt，若附带图片链接则作为 image_url 进行图生视频。",
+    "agentPrompt": "当需要使用 Grok 模型生成动态视频时，使用 {媒体娱乐} 中的 `GrokVideoGen`，视频画面描述放入【主要内容】，可选参考图 URL 放入 []：\nJEV:「始」请使用 {媒体娱乐} 中的 `GrokVideoGen`，生成视频【赛博朋克风格的城市街道，下着雨，霓虹灯闪烁】。「末」",
+    "defaultCommand": "submit",
+    "commands": [
+      {
+        "commandIdentifier": "submit",
+        "description": "提交 Grok 视频生成任务",
+        "aliases": ["生成视频", "Grok视频", "文生视频", "图生视频"],
+        "parameters": {
+          "prompt": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 1000,
+            "description": "视频画面与动作提示词"
+          },
+          "image_url": {
+            "type": "text",
+            "required": false,
+            "source": "url",
+            "maxLength": 500,
+            "description": "可选图生视频参考图片链接"
+          }
+        }
+      }
+    ]
   }
 }

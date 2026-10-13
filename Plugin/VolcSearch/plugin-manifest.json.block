@@ -3,7 +3,7 @@
   "name": "VolcSearch",
   "displayName": "火山引擎搜索插件",
   "version": "0.3.0",
-  "description": "使用火山引擎联网搜索 API 进行中文网络搜索。AI可以指定搜索查询、返回结果数量，并可选择包含正文内容、设置搜索时间范围等。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+  "description": "使用火山引擎联网搜索 API 进行中文网络搜索。AI可以指定搜索查询、返回结果数量，并可选择包含正文内容、设置搜索时间范围等。支持使用 || 分隔多个关键词进行并发搜索，所有结果同时返回。",
   "author": "Roo",
   "pluginType": "synchronous",
   "entryPoint": {
@@ -23,6 +23,54 @@
         "commandIdentifier": "VolcSearch",
         "description": "调用此工具使用火山引擎联网搜索 API 进行中文网络搜索。请注意优先使用中文词作为检索词。请在您的回复中，使用以下精确格式来请求搜索，确保所有参数值都用「始」和「末」准确包裹：\n\n\n重要提示给AI：\n当此工具执行完毕后，您将收到包含搜索结果的JSON对象。请基于这些结果回答用户的问题或完成相关任务。\n请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。",
         "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」VolcSearch「末」,\nquery:「始」2026年AI技术最新进展「末」,\ncount:「始」5「末」,\ntime_range:「始」OneYear「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
+      }
+    ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "使用火山引擎联网搜索 API 进行实时中文网络资讯检索与多源聚合。",
+    "jevPrompt": "根据用户对时效性的要求裁决 time_range 枚举：最近24小时或当天新闻选 OneDay；最近一周选 OneWeek；最近一个月选 OneMonth；最近一年选 OneYear；未要求时效时不设限制。",
+    "agentPrompt": "当需要调用火山引擎进行中文资讯检索时，使用 {信息获取} 中的 `VolcSearch`，检索词放入【主要内容】，时效约束写在 [] 中（如 [最近一天]、[最近一周]）：\nJEV:「始」请使用 {信息获取} 中的 `VolcSearch`，检索【2026年开源大模型最新发布】，限定[最近一周]。「末」",
+    "defaultCommand": "VolcSearch",
+    "commands": [
+      {
+        "commandIdentifier": "VolcSearch",
+        "description": "执行火山引擎中文联网搜索",
+        "aliases": ["火山搜索", "火山引擎", "火山检索"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "火山引擎搜索查询词"
+          },
+          "time_range": {
+            "type": "enum",
+            "required": false,
+            "description": "搜索结果时间范围过滤",
+            "values": {
+              "OneDay": "最近一天（24小时内）的新鲜资讯",
+              "OneWeek": "最近一周内发布的资讯",
+              "OneMonth": "最近一月内发布的资讯",
+              "OneYear": "最近一年内发布的资讯"
+            },
+            "aliases": {
+              "OneDay": ["一天内", "24小时内", "今天", "最新"],
+              "OneWeek": ["一周内", "最近一周", "本周"],
+              "OneMonth": ["一月内", "最近一月", "本月"],
+              "OneYear": ["一年内", "最近一年", "本年"]
+            }
+          },
+          "count": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
       }
     ]
   }

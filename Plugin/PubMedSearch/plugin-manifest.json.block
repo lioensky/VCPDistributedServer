@@ -107,5 +107,82 @@
         "example": "<<<[TOOL_REQUEST]>>>\nmaid:「始」你的名字「末」,\ntool_name:「始」PubMedSearch「末」,\ncommand:「始」convert_identifiers「末」,\nidentifier:「始」PMC1234567「末」,\nidentifier_type:「始」auto「末」\n<<<[END_TOOL_REQUEST]>>>"
       }
     ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "检索 PubMed / NCBI 数据库中的生物医学文献、论文摘要、作者与引用关系。",
+    "jevPrompt": "用户希望按主题或关键词检索医学文献时选择 search_articles；根据已知 PMID 获取文献详情时选择 get_article_details；获取精简摘要时选择 get_abstract；获取前沿热点或新趋势论文时选择 get_trending_articles。未明确指定动作时默认 search_articles。在 search_articles 中，要求最新发表选 pub_date，默认选 relevance。",
+    "agentPrompt": "当需要检索生物医学前沿文献、PubMed 论文或获取医学摘要时，使用 {信息获取} 中的 `PubMedSearch`，检索主题放入【主要内容】，排序放入 []：\nJEV:「始」请使用 {信息获取} 中的 `PubMedSearch`，检索【CRISPR 基因编辑在罕见病治疗中的应用】并按[最新发表]排序。「末」",
+    "defaultCommand": "search_articles",
+    "commands": [
+      {
+        "commandIdentifier": "search_articles",
+        "description": "按关键词或主题综合检索 PubMed 文献",
+        "aliases": ["医学搜索", "搜文献", "PubMed检索", "生物医学搜索"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "医学文献检索表达式或主题"
+          },
+          "sort": {
+            "type": "enum",
+            "required": false,
+            "description": "文献排序准则",
+            "values": {
+              "relevance": "按综合相关度排序",
+              "pub_date": "按发表日期降序（最新优先）",
+              "author": "按第一作者排序",
+              "journal": "按期刊名称排序"
+            },
+            "aliases": {
+              "relevance": ["相关度", "最相关"],
+              "pub_date": ["最新", "最新发表", "发表日期", "时间"],
+              "author": ["作者", "按作者"],
+              "journal": ["期刊", "按期刊"]
+            },
+            "default": "relevance"
+          },
+          "max_results": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
+      },
+      {
+        "commandIdentifier": "get_abstract",
+        "description": "根据 PMID 获取文献精简摘要",
+        "aliases": ["获取摘要", "文献摘要", "论文摘要"],
+        "parameters": {
+          "pmid": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 30,
+            "description": "目标文献的 PubMed ID (PMID)"
+          }
+        }
+      },
+      {
+        "commandIdentifier": "get_article_details",
+        "description": "根据 PMID 获取文献完整元数据与详情",
+        "aliases": ["文献详情", "论文详情", "完整元数据"],
+        "parameters": {
+          "pmid": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 30,
+            "description": "目标文献的 PubMed ID (PMID)"
+          }
+        }
+      }
+    ]
   }
 }
