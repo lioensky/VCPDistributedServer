@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "generatedAt": "2026-10-13T11:38:28.392089+00:00",
+  "generatedAt": "2026-10-19T07:31:49.031348+00:00",
   "source": {
     "name": "VCP 官方插件商店",
     "repository": "https://github.com/lioensky/VCPDistributedServer",
@@ -127,6 +127,16 @@
       "icon": "extension",
       "category": "information-retrieval",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/KarakeepSearch/KarakeepSearch.zip"
+    },
+    {
+      "name": "KeenableSearch",
+      "displayName": "Keenable 搜索插件",
+      "description": "使用 Keenable API 进行网络搜索，无需 API Key 即可使用（配置 KeenableKey 仅用于提升速率限制）。AI可以指定搜索查询、返回结果数量、限定站点及发布时间范围。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+      "version": "0.1.0",
+      "author": "Keenable",
+      "icon": "extension",
+      "category": "information-retrieval",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/KeenableSearch/KeenableSearch.zip"
     },
     {
       "name": "KEGGSearch",
