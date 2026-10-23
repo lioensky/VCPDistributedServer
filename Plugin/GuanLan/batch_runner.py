@@ -4,9 +4,24 @@ Runs gm.batch_screen (single source of truth, zero logic fork) and writes result
 import sys, os, json
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 import main as gm
+from pathlib import Path
+import re
+from ledger_io import atomic_write_json
+
 req = json.loads(sys.argv[1])
-r = gm.batch_screen(req["symbols"], with_flow=req.get("with_flow", True), with_exemption=req.get("with_exemption", False))
+if not isinstance(req, dict):
+    raise ValueError("batch request must be an object")
+root = Path(__file__).resolve().parent / "market_data"
+target = Path(req["out_path"])
+if (target.parent.resolve() != root.resolve()
+        or not re.fullmatch(r"batch_result_[0-9a-f]{10}\.json", target.name)
+        or target.is_symlink()):
+    raise ValueError("invalid batch result destination")
+r = gm.batch_screen(
+    req["symbols"], with_flow=req.get("with_flow", True),
+    with_exemption=req.get("with_exemption", False))
+if not isinstance(r, dict):
+    raise ValueError("batch result must be an object")
 r["source"] = "runner"
-with open(req["out_path"], "w", encoding="utf-8") as f:
-    json.dump(r, f, ensure_ascii=False, default=str)
-print("[batch_runner] written:", req["out_path"])
+atomic_write_json(target, r)
+print("[batch_runner] result persisted")

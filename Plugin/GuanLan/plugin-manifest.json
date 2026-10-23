@@ -1,8 +1,8 @@
 {
   "name": "GuanLan",
   "displayName": "观澜-A股数据引擎",
-  "version": "4.5.0",
-  "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
+  "version": "4.7.0",
+  "description": "A股智能数据引擎，46专业命令(v4.5决策层+pool_show终池名单/34c)+GL-JCL模拟盘三命令(v4.6.0批1：paper_buy/sell/portfolio，判断力校准实验室——真实行情真实费率制度等价T+1/涨跌停/整手，paper_前缀账本物理隔离real零改动)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen v4.1五风格内核本体单一事实源, 摘要表+PASS明细, P5哨兵; 34a修复2026-09-29换绑, meta带framework_hash溯源)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~56,cashflow-v2新口径)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。v4.7.0(2026-10-19生产改造): cashflow-v2现金流量公式(同报告期合并现金流量表n_cashflow_act/net_profit≥0.5,旧营业利润公式废止)+真实账本事务层(staging原子写+request_id幂等回执)+sector_ranking子进程化90秒限时+温度计日终口径+226项测试。作者: 观澜 & 冬竹子(翔)",
   "author": "观澜 & 冬竹子（翔）",
   "pluginType": "synchronous",
   "entryPoint": {
@@ -12,11 +12,41 @@
     "protocol": "stdio",
     "timeout": 300000
   },
+  "configSchema": {
+    "TUSHARE_TOKEN": {
+      "type": "string",
+      "description": "Tushare凭据，仅在本地私有config.env填写"
+    },
+    "BROKER_COMMISSION_STOCK": {
+      "type": "string",
+      "description": "股票佣金率，默认0.00025，Python校验"
+    },
+    "BROKER_COMMISSION_ETF": {
+      "type": "string",
+      "description": "ETF佣金率，默认0.00025，Python校验"
+    },
+    "BROKER_MIN_COMMISSION": {
+      "type": "string",
+      "description": "单笔最低佣金元，默认5，Python校验"
+    },
+    "GUANLAN_AGENT_NAME": {
+      "type": "string",
+      "description": "判断日记所属Agent，默认观澜"
+    },
+    "GUANLAN_MODEL_VERSION": {
+      "type": "string",
+      "description": "判断模型版本，默认glm-5.3"
+    },
+    "GUANLAN_DIARY_DIR": {
+      "type": "string",
+      "description": "可选日记目录绝对路径，空值按Agent名称派生"
+    }
+  },
   "capabilities": {
     "invocationCommands": [
       {
         "commandIdentifier": "harvest_judgments",
-        "description": "[GuanLan 判断账本] 收割日记中的JUDGE判断块入judgments.jsonl账本。幂等: mtime水位线+内容指纹去重, 重复调用零副作用。返回五格收割报告。外层status=success仅代表子进程跑完, 还需看result.exit_code。无参数。",
+        "description": "[GuanLan 判断账本] 收割日记中的JUDGE判断块入judgments.jsonl账本。幂等: mtime水位线+内容指纹去重, 重复调用零副作用。返回五格收割报告。非零退出或非法报告返回外层status=error；有效报告仍须核对result.exit_code及业务字段。失败或超时不代表账本必然未写入，先核对状态再重试。无参数。",
         "example": "tool_name: GuanLan, command: harvest_judgments (无参数)"
       },
       {
@@ -45,13 +75,28 @@
         "example": "tool_name: GuanLan, command: exemption_check, symbol: 601899"
       },
       {
-        "description": "[GuanLan 决策层] 批量三问: 循环调用stock_screen_v3本体(单一事实源), 输出摘要表+仅PASS股全字段明细。pacing 0.35s/票, 单票失败不阻塞, MAX_BATCH=30硬编码。P5哨兵: flow全灭或错误过半时data_quality警告。参数(推荐JSON形态, 参数须放params对象内): symbols必填(六位代码数组或逗号串, 如[601899,000807]); with_flow默认true; with_exemption默认false(rotation滞后2交易日, 弱市场景慎开)。k=v路径限制(M13修正2026-09-13): 多票须引号包裹, 裸逗号会被解析器拒绝; 布尔参数k=v传法失效, 必须JSON。#27三方会审+Nova r12三连实测产物。",
+        "description": "[GuanLan 决策层] 批量三问: 循环调用stock_screen v4.1五风格内核本体(单一事实源), 输出摘要表+仅PASS股全字段明细。内核溯源: meta.framework_hash参数级指纹(34a修复2026-09-29换绑, 原误绑v3)。pacing 0.35s/票, 单票失败不阻塞, MAX_BATCH=30硬编码。P5哨兵: flow全灭或错误过半时data_quality警告。参数(推荐JSON形态, 参数须放params对象内): symbols必填(六位代码数组或逗号串, 如[601899,000807]); with_flow默认true; with_exemption默认false(rotation滞后2交易日, 弱市场景慎开)。k=v路径限制(M13修正2026-09-13): 多票须引号包裹, 裸逗号会被解析器拒绝; 布尔参数k=v传法失效, 必须JSON。#27三方会审+Nova r12三连实测产物。",
         "commandIdentifier": "batch_screen",
         "example": "tool_name: GuanLan, command: batch_screen, params: {symbols: [601899, 000807]}"
       },
       {
+        "commandIdentifier": "paper_buy",
+        "description": "[GuanLan GL-JCL模拟盘] 虚拟建仓: 判断力训练场, 真实行情+费率+六道闸+制度等价(T+1/涨跌停/停牌/整手)。params必填: group(exp|ctrl_a|ctrl_b)/intent(受控枚举)/expectation/shares(100整数倍)/stop_loss/target; 可选conviction(带上写judgments行model_version=paper-v0)。触闸落rejected行。模拟成交仅限中国时区09:30至11:30、13:00至14:57（右端不含），不模拟集合竞价；须交易日历确认开市，源行情年龄不超过120秒、未来容差5秒。9:26可准备采样，不代表该时点允许成交。买卖可传稳定request_id；同ID不同业务参数拒绝，不要更换ID盲目重试。",
+        "example": "tool_name: GuanLan, command: paper_buy, symbol: 600674, params: {group: exp, intent: trend_follow, expectation: 板块轮动修复, shares: 100, stop_loss: 9.0, target: 11.0}"
+      },
+      {
+        "commandIdentifier": "paper_sell",
+        "description": "[GuanLan GL-JCL模拟盘] 虚拟平仓: params必填intent(stop_loss_hit/target_hit/logic_invalidated/time_expiry/discipline/partial_profit), 可选shares部分平仓(剩余成本原单价#36a)。同买入一样要求开市连续竞价时段及有效源行情。T+1当日止损登记deferred，一字跌停同顺延族；保留首次触发证据，后续调用满足条件时按该次有效报价执行，不保证自动捕获次日开盘首价。部分卖出保留剩余持仓的顺延记录。全平省略shares，显式数量须为正整数；稳定request_id用于防重复记账。",
+        "example": "tool_name: GuanLan, command: paper_sell, symbol: 600674, params: {intent: stop_loss_hit}"
+      },
+      {
+        "commandIdentifier": "paper_portfolio",
+        "description": "[GuanLan GL-JCL模拟盘] 虚拟盘总览(只读): paper持仓+实时盈亏+距止损/目标+分group统计+real对照+耗尽监控。无参数。",
+        "example": "tool_name: GuanLan, command: paper_portfolio (无参数)"
+      },
+      {
         "commandIdentifier": "settle_results",
-        "description": "[GuanLan 校准层] 到期判断自动结算: 扫judgments账本找time_window_end<=今日且未结算的判断, 拉判断日与窗口末日收盘价(本地kline库优先), 按口径结算(actual_direction含flat带±3.5%/涨跌幅/止损触发语义scan_stop_hit)写入results.jsonl。幂等(已结算跳过), 挂日报步骤2.85每日执行, 账本从此日清。无参数(command可选传日期补跑)。",
+        "description": "[GuanLan 校准层] 到期判断自动结算: 扫judgments账本找time_window_end<=今日且未结算的判断, 拉判断日与窗口末日收盘价(本地kline库优先), 按口径结算(actual_direction含flat带±3.5%/涨跌幅/止损触发语义scan_stop_hit)写入results.jsonl。已结算跳过；止损扫描覆盖未知时挂起，不把缺行情当成未触止损。非零退出或非法报告返回error，失败后须先核对结果账本。无日期补跑参数；独立脚本支持--dry-run，插件入口不透传该选项。挂日报调用不等于所有判断必能当日结清。",
         "example": "tool_name: GuanLan, command: settle_results (无参数)"
       }
     ]

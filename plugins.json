@@ -91,8 +91,8 @@
     {
       "name": "GuanLan",
       "displayName": "观澜-A股数据引擎",
-      "description": "A股智能数据引擎，45专业命令(v4.5决策层)。九月在v4.3量化体系+v4.4全链修复上新增: 决策层批量batch_screen(循环stock_screen_v3本体单一事实源, 摘要表+PASS明细, P5哨兵)与exemption_check豁免三证明单票查询, 决策链贯通funnel→batch→定仓; M13参数陷阱修复(int归一+布尔显式转换, k=v路径限制文档化); 通信墙300s(翔裁)。既有: 六道岗风控栈+豁免通道/判断账本+收割+Brier校准/四层漏斗(终池~142)+吊灯止损+每日例行/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁桥。作者: 观澜 & 冬竹子(翔)",
-      "version": "4.5.0",
+      "description": "A股智能数据引擎，49专业命令。十月在v4.6 GL-JCL判断校准实验室(虚拟盘实验判断而非策略: expectation预期留痕+conviction概率, T+1顺延/涨跌停矩阵/停牌/整手制度等价四件套, exp实验组-ctrl直觉组-随机基线组分组对照, 自建判断力数据库)与v4.7账本事务层(real_ledger原子写+request_id幂等回执/cashflow-v2盈利质量公式: 同报告期现金流≥0.5×净利润/温度计日终口径/pool_show终池名单查询)收口, 226项回归测试。既有: 六道岗风控栈+豁免三证明/判断账本+收割+到期结算+Brier校准/四层漏斗+观察池轮换/决策链funnel→batch→定仓/双源容灾+filelock/五风格选股+4策略回测+事件扫描+舆情+解禁。作者: 观澜 & 冬竹子(翔)",
+      "version": "4.7.0",
       "author": "观澜 & 冬竹子（翔）",
       "icon": "extension",
       "category": "tool",

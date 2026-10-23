@@ -16,18 +16,20 @@ Spec: judgment_spec_v1.md (观澜 v1.0, 2026-09-03) - 〔JUDGE〕 pipe blocks, 6
 Usage: python harvest_judgments.py [--dry-run]
 Design: 瑶序 2026-09-02 | Spec: 观澜 v1.0 (2026-09-03)
 """
-import json, os, re, sys
+import json, re, sys
 from pathlib import Path
 from filelock import FileLock
+from gl_config import read_diary_config
+from ledger_guard import recovered_access
 
 BASE = Path(__file__).parent
 J_FILE = BASE / "judgments.jsonl"
 STATE_FILE = BASE / "harvest_state.json"
 DATA_LOCK = FileLock(str(BASE / "guanlan.lock"), timeout=60)  # L8: same lock file as main.py DATA_LOCK - harvest instances mutually exclude each other AND plugin-side writes; 60s loud timeout, never silent hang (Nova audit round 3)
-# Configurable via config.env (v4.5, backward-compatible defaults)
-AGENT = os.environ.get("GUANLAN_AGENT_NAME", "观澜")
-MODEL_VERSION = os.environ.get("GUANLAN_MODEL_VERSION", "glm-5.3")
-DIARY_DIR = Path(os.environ.get("GUANLAN_DIARY_DIR") or str(BASE.parent.parent / "dailynote" / AGENT))  # Plugin\GuanLan -> VCPToolBox root -> dailynote; override for non-VCP deployments
+_DIARY_CONFIG = read_diary_config(BASE)
+DIARY_DIR = _DIARY_CONFIG["diary_dir"]
+MODEL_VERSION = _DIARY_CONFIG["model_version"]
+AGENT = _DIARY_CONFIG["agent"]
 
 # ---- filled from 观澜 spec v1.0 (judgment_spec_v1.md, 2026-09-03) ----
 BLOCK_PATTERN = re.compile(r"〔JUDGE〕\r?\n(.*?)〔/JUDGE〕", re.S)
@@ -40,7 +42,13 @@ def extract_fields(block_text, diary_name):
     m = _FN_TS.search(diary_name)
     if not m:
         return None  # filename carries write-time truth; unparseable -> reject (conservative)
+    from datetime import datetime, date
+    import math
     row = {"timestamp": "%sT%s:%s:%s" % m.groups()}
+    try:
+        judgment_time = datetime.fromisoformat(row["timestamp"])
+    except ValueError:
+        return None
     for line in block_text.splitlines():
         line = line.strip()
         if ":" in line:
@@ -53,7 +61,7 @@ def extract_fields(block_text, diary_name):
         if not val:
             continue
         if key == "标的":
-            if not re.fullmatch(r"\d{6}", val):
+            if not re.fullmatch(r"[0-9]{6}", val):
                 return None
             row["symbol"] = val
         elif key == "方向":
@@ -71,16 +79,29 @@ def extract_fields(block_text, diary_name):
         elif key == "窗口":
             if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", val):
                 return None
+            try:
+                window_end = date.fromisoformat(val)
+                if window_end.isoformat() != val or window_end < judgment_time.date():
+                    return None
+            except ValueError:
+                return None
             row["time_window_end"] = val
         elif key == "止损" and val != "无":
             try:
-                row["stop_loss"] = float(val)
-            except ValueError:
+                stop = float(val)
+                if not math.isfinite(stop) or stop <= 0:
+                    return None
+                row["stop_loss"] = stop
+            except (ValueError, OverflowError):
                 return None
         elif key == "state":
             if val not in STATE_MAP:
                 return None
             row["state"] = STATE_MAP[val]
+        elif key in ("judgment_id", "corrects"):
+            if not re.fullmatch(r"[A-Za-z0-9][A-Za-z0-9_.:-]{0,127}", val):
+                return None
+            row[key] = val
         elif key == "注":
             row["note"] = val
     if any(k not in row for k in ("symbol", "direction", "probability", "time_window_end", "state")):
@@ -98,8 +119,10 @@ def load_ledger_keys():
                 continue
             try:
                 obj = json.loads(line)
-            except json.JSONDecodeError:
-                continue
+            except json.JSONDecodeError as exc:
+                raise ValueError("damaged judgment ledger; harvest refused") from exc
+            if not isinstance(obj, dict):
+                raise ValueError("judgment ledger requires object rows")
             if "_meta" in obj or "_example" in obj:
                 continue
             keys.add((obj.get("symbol"), obj.get("time_window_end"), obj.get("direction"), obj.get("probability"), obj.get("stop_loss")))  # 5-tuple fingerprint: stop_loss in key so stop-loss-only errata survive dedup (M3 fix, Nova audit round 2)
@@ -109,13 +132,24 @@ def load_watermark():
     """Return {filename: mtime_ns}. Pure performance cache - correctness lives in dedup keys. M1 fix 2026-09-02 (Nova audit): was a name-set that silently skipped blocks appended via DailyNote update."""
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text(encoding="utf-8")).get("processed", {})
-        except (json.JSONDecodeError, KeyError):
+            document = json.loads(STATE_FILE.read_text(encoding="utf-8"))
+            if not isinstance(document, dict):
+                return {}
+            processed = document.get("processed", {})
+            if (not isinstance(processed, dict)
+                    or any(not isinstance(name, str)
+                           or isinstance(stamp, bool)
+                           or not isinstance(stamp, int) or stamp < 0
+                           for name, stamp in processed.items())):
+                return {}
+            return processed
+        except (json.JSONDecodeError, OSError):
             pass
     return {}
 
 def save_watermark(processed):
-    STATE_FILE.write_text(json.dumps({"processed": processed}, ensure_ascii=False, indent=1), encoding="utf-8")
+    from ledger_io import atomic_write_json
+    atomic_write_json(STATE_FILE, {"processed": processed})
 
 def next_seq(existing_lines, agent, day_str, new_rows):
     """Max seq among same (agent, day) in ledger + already-accepted new rows, +1 basis."""
@@ -144,10 +178,12 @@ def _main_locked():
             if line:
                 try:
                     obj = json.loads(line)
+                    if not isinstance(obj, dict):
+                        raise ValueError("judgment ledger requires object rows")
                     if "_meta" not in obj and "_example" not in obj:
                         ledger_lines.append(obj)
-                except json.JSONDecodeError:
-                    pass
+                except json.JSONDecodeError as exc:
+                    raise ValueError("damaged judgment ledger; harvest refused") from exc
 
     report = {"files_scanned": 0, "files_new": 0, "blocks_found": 0,
               "rows_appended": 0, "dup_skipped": 0, "malformed_skipped": 0}
@@ -176,28 +212,45 @@ def _main_locked():
             row["evidence"] = diary.name
             row["model_version"] = MODEL_VERSION
             key = (row.get("symbol"), row.get("time_window_end"), row.get("direction"), row.get("probability"), row.get("stop_loss"))  # M3: stop_loss joins fingerprint - stop-loss-only errata must not be deduped away
-            if key in dedup_keys:
+            identity = row.get("judgment_id")
+            if identity is not None:
+                previous = next(
+                    (old for old in ledger_lines + new_rows
+                     if old.get("judgment_id") == identity), None)
+                if previous is not None:
+                    # Import location and computed sequence are not belief fields.
+                    ignored = {"seq", "evidence"}
+                    left = {k: v for k, v in previous.items() if k not in ignored}
+                    right = {k: v for k, v in row.items() if k not in ignored}
+                    if left != right:
+                        raise ValueError("conflicting imported judgment_id")
+                    report["dup_skipped"] += 1
+                    continue
+            elif key in dedup_keys:
                 report["dup_skipped"] += 1
                 continue
             day = str(row.get("timestamp", ""))[:10]
             row["seq"] = next_seq(ledger_lines, AGENT, day, new_rows) + 1
-            dedup_keys.add(key)
+            if identity is None:
+                dedup_keys.add(key)
             new_rows.append(row)
 
+    from judgment_identity import select_judgments
+    select_judgments(ledger_lines + new_rows)
     if not dry:
         if new_rows:
             # 拼行防御 (2026-09-06判例): 追加前检查文件末字符, 非换行先补 -
             # 根因: v4.3重写WriteFile末尾无\n, 首收追加直接拼接产生{_example}{row1}死行
-            _needs_nl = False
-            if J_FILE.exists() and J_FILE.stat().st_size > 0:
-                with J_FILE.open("rb") as _f:
-                    _f.seek(J_FILE.stat().st_size - 1)
-                    _needs_nl = _f.read(1) not in (b"\n", b"\r")
-            with J_FILE.open("a", encoding="utf-8") as f:
-                if _needs_nl:
-                    f.write("\n")
-                for row in new_rows:
-                    f.write(json.dumps(row, ensure_ascii=False) + "\n")
+            from ledger_io import atomic_write_bytes
+            existing = J_FILE.read_bytes() if J_FILE.exists() else b""
+            separator = (
+                b"\n" if existing and not existing.endswith((b"\n", b"\r")) else b"")
+            addition = "".join(
+                json.dumps(row, ensure_ascii=False, allow_nan=False) + "\n"
+                for row in new_rows).encode("utf-8")
+            # main() holds the shared recovery lock. If watermark saving later
+            # fails, content deduplication prevents replaying this committed batch.
+            atomic_write_bytes(J_FILE, existing + separator + addition)
         fresh = dict(processed)
         fresh.update(scanned_mtimes)  # L1 fix: watermark advances even when new_rows empty; mtime from harvest-time not commit-time
         save_watermark(fresh)
@@ -208,7 +261,13 @@ def _main_locked():
 def main():
     # L8: lock spans scan+dedup+commit - two concurrent harvest instances reading pre-write snapshots
     # would BOTH judge new rows as unseen and double-append. Whole-run lock, not write-only lock.
-    with DATA_LOCK:
+    # Match the paper transaction participant set. Derive the root from
+    # the actual ledger path so isolated callers never recover production.
+    allowed = {
+        "paper_positions.json", "paper_trades.jsonl", "paper_account.json",
+        J_FILE.name,
+    }
+    with recovered_access(J_FILE.parent, allowed, DATA_LOCK):
         _main_locked()
 
 if __name__ == "__main__":

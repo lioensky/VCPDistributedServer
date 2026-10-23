@@ -19,6 +19,8 @@ Design: Nova #3 (schema) | Compensation clause: 观澜勘误帖 2026-08-21 | Pip
 """
 import json, sys
 from pathlib import Path
+from filelock import FileLock
+from ledger_guard import recovered_access
 
 BASE = Path(__file__).parent
 J_FILE = BASE / "judgments.jsonl"
@@ -35,6 +37,9 @@ def load(path):
         try:
             obj = json.loads(line)
         except json.JSONDecodeError:
+            bad += 1
+            continue
+        if not isinstance(obj, dict):
             bad += 1
             continue
         if "_meta" in obj or "_example" in obj:
@@ -54,26 +59,35 @@ def latest_by_key(rows, key_fields, ts_field="timestamp"):
 def month_filter(rows, ym, key="timestamp"):
     return [r for r in rows if str(r.get(key, ""))[:7] == ym] if ym else rows
 
-def main():
+def _main_locked():
     ym = sys.argv[1] if len(sys.argv) > 1 else None
     judgments, j_bad = load(J_FILE)
     results, r_bad = load(R_FILE)
+    if j_bad or r_bad:
+        raise ValueError("damaged judgment/result ledger; calibration refused")
+    import math
+    grouped = {}
+    invalid_pairs = 0
 
     excluded_no_evidence = [
         j for j in judgments
         if j.get("source") == "diary-import" and not j.get("evidence")
     ]
-    usable = [j for j in judgments if j not in excluded_no_evidence]
+    from judgment_identity import (
+        select_judgments, result_index, matching_result, key)
+    selected = select_judgments(judgments)
+    usable = [
+        j for j in selected.values()
+        if not (j.get("source") == "diary-import" and not j.get("evidence"))]
     usable = month_filter(usable, ym)
-
-    j_idx = latest_by_key(usable, ["symbol", "time_window_end"])
-    r_idx = latest_by_key(results, ["symbol", "window_end"])
+    j_idx = {key(j): j for j in usable}
+    r_idx = result_index(results)
 
     briers, buckets = [], {i: [0.0, 0, 0] for i in range(5)}
     stop_settlements = []  # Nova r14分账 (2026-09-20): 止损结算行测的是路径结果非预测质量,
     # 混入Brier会把"预测对但路径死"记成满分miss (up 0.65止损后窗口末大涨案例) — 分账处理
-    for key, j in j_idx.items():
-        r = r_idx.get(key)
+    for identity_key, j in j_idx.items():
+        r = matching_result(j, r_idx)
         if r is None:
             continue
         _jm = r.get("judge_meta") or {}
@@ -84,12 +98,27 @@ def main():
                 "settled_as": r.get("actual_direction"),
                 "note": "止损路径结算, 不进预测Brier (路径结果与预测质量分账)"})
             continue
-        outcome = 1 if r.get("actual_direction") == j.get("direction") else 0
         try:
-            p = float(j.get("probability", 0.5))
-        except (TypeError, ValueError):
+            raw_probability = j.get("probability")
+            if isinstance(raw_probability, bool) or raw_probability is None:
+                raise ValueError("probability required")
+            p = float(raw_probability)
+            if not math.isfinite(p) or not 0 <= p <= 1:
+                raise ValueError("invalid probability")
+            if (j.get("direction") not in ("up", "down", "flat")
+                    or r.get("actual_direction") not in ("up", "down", "flat")):
+                raise ValueError("invalid direction")
+        except (TypeError, ValueError, OverflowError):
+            invalid_pairs += 1
             continue
-        briers.append((p - outcome) ** 2)
+        outcome = 1 if r["actual_direction"] == j["direction"] else 0
+        score = (p - outcome) ** 2
+        briers.append(score)
+        group_key = (
+            str(j.get("model_version") or "legacy"),
+            str(j.get("group") or j.get("state") or "unspecified"),
+            j["direction"])
+        grouped.setdefault(group_key, []).append(score)
         b = min(int(p * 5), 4)
         buckets[b][0] += p; buckets[b][1] += 1; buckets[b][2] += outcome
 
@@ -120,7 +149,25 @@ def main():
             report["note"] = f"matched={matched} < 30: reliability curve suppressed (first-month rule)"
     else:
         report["note"] = "no matched judgment-result pairs yet"
-    print(json.dumps(report, ensure_ascii=False, indent=2))
+    report["excluded_invalid_pairs"] = invalid_pairs
+    report["by_model_group_direction"] = [
+        {"model_version": key[0], "group": key[1], "direction": key[2],
+         "matched": len(scores), "brier": round(sum(scores) / len(scores), 4)}
+        for key, scores in sorted(grouped.items())]
+    print(json.dumps(report, ensure_ascii=False, indent=2, allow_nan=False))
+
+def main():
+    root = J_FILE.parent
+    if R_FILE.parent.resolve() != root.resolve():
+        raise ValueError("judgment and result ledgers must share a directory")
+    allowed = {
+        "paper_positions.json", "paper_trades.jsonl",
+        "paper_account.json", J_FILE.name,
+    }
+    lock = FileLock(str(root / "guanlan.lock"), timeout=60)
+    with recovered_access(root, allowed, lock):
+        return _main_locked()
+
 
 if __name__ == "__main__":
     main()
