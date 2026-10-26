@@ -1,0 +1,86 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "KeenableSearch",
+  "displayName": "Keenable 搜索插件",
+  "version": "0.1.0",
+  "description": "使用 Keenable API 进行网络搜索，无需 API Key 即可使用（配置 KeenableKey 仅用于提升速率限制）。AI可以指定搜索查询、返回结果数量、限定站点及发布时间范围。支持使用 | 分隔多个关键词进行并发搜索，所有结果同时返回。",
+  "author": "Keenable",
+  "pluginType": "synchronous",
+  "entryPoint": {
+    "type": "nodejs",
+    "command": "node KeenableSearch.js"
+  },
+  "communication": {
+    "protocol": "stdio",
+    "timeout": 30000
+  },
+  "configSchema": {
+    "KeenableKey": "string"
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "KeenableSearch",
+        "description": "调用此工具使用 Keenable API 进行网络搜索，返回网页标题、链接、正文摘要及发布时间。参数：query（必需，检索词，支持 | 分隔多个关键词并发搜索）；count（可选，结果数量，默认 10，最多 20）；site（可选，限定站点域名，如 github.com）；freshness（可选，day/week/month/year，限定最近发布的结果）；published_after、published_before（可选，YYYY-MM-DD 格式的发布日期范围）。重要提示：请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。请在您的回复中，使用以下精确格式来请求搜索，确保所有参数值都用「始」和「末」准确包裹：\n\n\n重要提示给AI：\n当此工具执行完毕后，您将收到包含搜索结果的JSON对象。请基于这些结果回答用户的问题或完成相关任务。\n请优先使用中文词作为检索词，并带上即时信息（如当前年份、月份等）进行检索，以获得更准确的结果。",
+        "example": "```text\n<<<[TOOL_REQUEST]>>>\ntool_name:「始」KeenableSearch「末」,\nquery:「始」最近一周的AI技术进展「末」,\ncount:「始」5「末」,\nfreshness:「始」week「末」\n<<<[END_TOOL_REQUEST]>>>\n```"
+      }
+    ]
+  },
+  "jev": {
+    "schemaVersion": 1,
+    "enabled": true,
+    "category": "信息获取",
+    "jevDescPrompt": "使用 Keenable 搜索 API 进行网络资讯检索，可限定站点与发布时间。",
+    "jevPrompt": "根据用户对结果时效性的意图裁决 freshness 枚举：要求最近一天或当天资讯选 day；要求最近一周选 week；要求最近一月选 month；要求最近一年选 year；未明确要求时效时选择 all。",
+    "agentPrompt": "当需要通过 Keenable 检索互联网资讯时，使用 {信息获取} 中的 `KeenableSearch`，关键词放入【主要内容】，时效约束放入 []，限定站点写成 [站点:域名]：\nJEV:「始」请使用 {信息获取} 中的 `KeenableSearch`，检索【开源大模型最新发布】，限定[最近一周][站点:github.com]。「末」",
+    "defaultCommand": "KeenableSearch",
+    "commands": [
+      {
+        "commandIdentifier": "KeenableSearch",
+        "description": "执行 Keenable 网络搜索",
+        "aliases": ["Keenable搜索", "Keenable"],
+        "parameters": {
+          "query": {
+            "type": "text",
+            "required": true,
+            "source": "primary",
+            "maxLength": 500,
+            "description": "网络检索关键词"
+          },
+          "freshness": {
+            "type": "enum",
+            "required": false,
+            "description": "搜索结果发布时效范围",
+            "values": {
+              "day": "最近24小时内新鲜资讯",
+              "week": "最近一周内发布的资讯",
+              "month": "最近一月内发布的资讯",
+              "year": "最近一年内发布的资讯",
+              "all": "不限发布时间（全部历史结果）"
+            },
+            "aliases": {
+              "day": ["一天内", "24小时", "今日", "最新"],
+              "week": ["一周内", "最近一周", "本周"],
+              "month": ["一月内", "最近一月", "本月"],
+              "year": ["一年内", "最近一年", "本年"],
+              "all": ["不限", "全部"]
+            },
+            "default": "all"
+          },
+          "site": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["站点", "网站", "域名"],
+            "maxLength": 100
+          },
+          "count": {
+            "type": "text",
+            "source": "constraints",
+            "prefixes": ["条数", "数量", "返回", "条"],
+            "maxLength": 3
+          }
+        }
+      }
+    ]
+  }
+}

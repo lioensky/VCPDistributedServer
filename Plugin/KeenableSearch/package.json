@@ -1,0 +1,20 @@
+{
+  "name": "keenable-search-vcp-plugin",
+  "version": "0.1.0",
+  "description": "VCP plugin that performs web search through the Keenable API.",
+  "main": "KeenableSearch.js",
+  "scripts": {
+    "test": "node --test script/keenableSearch.test.js"
+  },
+  "keywords": [
+    "vcp",
+    "plugin",
+    "keenable",
+    "search"
+  ],
+  "author": "Keenable",
+  "license": "MIT",
+  "engines": {
+    "node": ">=18"
+  }
+}
