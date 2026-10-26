@@ -1,22 +1,43 @@
-# Python
-__pycache__/
-*.pyc
-
-# Personal config & secrets
+# Private deployment configuration: never commit populated credentials.
 config.env
+config.env.*
+!config.env.example
+.env
+.env.*
+!.env.example
 
-# Local runtime artifacts (never distribute)
-market_data/
-patches/
-harvest_state.json
-probe_raw.json
-trades_annotations.json
-guanlan.lock
+# Python runtime artifacts.
+__pycache__/
+*.py[cod]
 
-# Backups & logs
-main.py.bak_*
-trades.json.bak_*
+# Local diagnostics, locks and backups.
+probe_raw*.json
 *.log
+*.lock
+*.tmp
+*.bak
+*.bak_*
+*.zip
 
-# Note: positions/trades/account/watchlist/judgments/results
-# ship as EMPTY templates in repo (personal data never committed)
+# Generated market data and paper evidence.
+market_data/
+paper_snapshots/
+harvest_state.json
+
+# Live ledgers are private runtime state.
+# Ignore rules do NOT untrack files already present in Git.
+account.json
+positions.json
+trades.json
+watchlist.json
+judgments.jsonl
+results.jsonl
+trades_annotations.json
+paper_account.json
+paper_positions.json
+paper_trades.jsonl
+risk_state.json
+
+# Publish synthetic examples under distinct *.example names.
+# Local development only: regression suite is not published (2026-10-23)
+tests/

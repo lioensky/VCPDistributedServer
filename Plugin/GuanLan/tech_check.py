@@ -62,25 +62,53 @@ def judge_stock(points):
     if n < MA_SLOW:
         return {'verdict': 'insufficient_history', 'n_days': n,
                 'reason': f'窗口内仅{n}个交易日 < {MA_SLOW} (新股或长期停牌, 宁缺毋假)'}
-    adj = [c * f for _, c, f, *_ in points]
+    import math
+    try:
+        adj = []
+        for point in points:
+            if len(point) != 4:
+                raise ValueError("invalid technical point")
+            _, close, factor, _ = point
+            for value in (close, factor):
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or value <= 0):
+                    raise ValueError("invalid price or adjustment factor")
+            adjusted = close * factor
+            if not math.isfinite(adjusted):
+                raise ValueError("adjusted price overflow")
+            adj.append(adjusted)
+        if not all(math.isfinite(sum(adj[-window:]))
+                   for window in (MA_FAST, MA_SLOW)):
+            raise ValueError("moving average overflow")
+    except (ValueError, TypeError, OverflowError):
+        return {"verdict": "fail", "n_days": n,
+                "reason": "价格或复权因子非法；不计算技术信号"}
     ma_f = sum(adj[-MA_FAST:]) / MA_FAST
     ma_s = sum(adj[-MA_SLOW:]) / MA_SLOW
     latest = adj[-1]
     r1, r2 = ma_f > ma_s, latest >= ma_f
     # R4 (v1.1, 观澜签字 2026-09-06: K=0.8 量能枯竭剃刀): 近5日均量 >= 0.8 × 前20日均量
     # 基线防自污染: 前20日 = 最近25日中排除最近5日 (观澜探针同款构造)
-    vols = [v for *_, v in points if v is not None]
-    vol_ratio = None  # 23f: 结构化量比字段(排序供数据), 原先只埋在reason文字里
-    if len(vols) >= 25:
+    # Preserve observation positions: missing volume cannot pull older dates
+    # into the latest 25-observation window.
+    vols = [point[3] for point in points[-25:]]
+    valid_volumes = (
+        len(vols) == 25 and all(
+            not isinstance(v, bool) and isinstance(v, (int, float))
+            and math.isfinite(v) and v >= 0 for v in vols))
+    vol_ratio = None
+    if valid_volumes:
         v5 = sum(vols[-5:]) / 5
-        v20p = sum(vols[-25:-5]) / 20
-        if v20p <= 0:
+        v20p = sum(vols[:-5]) / 20
+        if not math.isfinite(v5) or not math.isfinite(v20p):
+            r4, r4_note = False, "量能聚合溢出，停止判定"
+        elif v20p <= 0:
             r4, r4_note = False, "前20日均量为0(长期停牌或数据缺失)"
         else:
             vol_ratio = round(v5 / v20p, 3)
             r4, r4_note = v5 >= 0.8 * v20p, f"量比{v5/v20p:.3f} vs 0.8 (5日均量/前20日均量)"
     else:
-        r4, r4_note = False, f"量数据不足{len(vols)}/25"
+        r4, r4_note = False, "最近25条观察量数据缺失或非法，不以旧日补齐"
     if r1 and r2 and r4:
         verdict = 'pass'
         reason = f"多头排列 MA20={ma_f:.3f}>MA60={ma_s:.3f}; 站上MA20 ({latest:.3f}>={ma_f:.3f}); {r4_note} [后复权]"
@@ -109,15 +137,17 @@ def main():
         sys.exit(f"L1 output missing: {src.name}")
     pool = json.loads(src.read_text(encoding='utf-8'))['items']
     dates_used, series = load_matrix(date)
+    if not dates_used or dates_used[-1] != date:
+        sys.exit("target-date K-line matrix missing; technical pool unchanged")
     if len(dates_used) < MA_SLOW:
         sys.exit(f"kline matrix only {len(dates_used)} days (< {MA_SLOW}) - run kline_snapshot.py --backfill first")
     results, stats = [], {'pass': 0, 'fail': 0, 'insufficient_history': 0, 'no_data': 0}
     for row in pool:
         code = row['ts_code']
         pts = series.get(code)
-        if not pts:
+        if not pts or pts[-1][0] != date:
             results.append({'ts_code': code, 'verdict': 'no_data',
-                            'reason': 'kline矩阵无数据 (L1有票但K线无行, 数据一致性信号)'})
+                            'reason': '目标日无有效行情与复权因子配对；不使用旧日数据替代'})
             stats['no_data'] += 1
             continue
         res = judge_stock(pts)
@@ -138,7 +168,8 @@ def main():
            "items": passed,
            "all_results": results}
     out_file = DATA_DIR / f"tech_passed_{date}.json"
-    out_file.write_text(json.dumps(out, ensure_ascii=False), encoding='utf-8')
+    from ledger_io import atomic_write_json
+    atomic_write_json(out_file, out)
     print(json.dumps({"status": "ok", "trade_date": date, "pool": len(pool),
                        "kline_days": len(dates_used), **stats,
                        "passed": len(passed), "file": out_file.name}, ensure_ascii=False, indent=1))

@@ -20,8 +20,13 @@ import json
 import time
 import os
 import traceback
+import subprocess
 from datetime import datetime, timedelta
 from filelock import FileLock
+from gl_config import read_fee_config, read_tushare_token
+import real_ledger as _real_ledger
+from ledger_batch import CommittedOutcomeError
+from functools import wraps
 
 import akshare as ak
 import pandas as pd
@@ -34,6 +39,7 @@ DATA_LOCK = FileLock(os.path.join(PLUGIN_DIR, "guanlan.lock"))
 
 def synchronized_data(func):
     """跨进程文件锁装饰器：防止并发调用导致的JSON读写竞态"""
+    @wraps(func)
     def wrapper(*args, **kwargs):
         with DATA_LOCK:
             return func(*args, **kwargs)
@@ -44,6 +50,73 @@ POSITIONS_PATH = os.path.join(PLUGIN_DIR, "positions.json")
 TRADES_PATH = os.path.join(PLUGIN_DIR, "trades.json")
 ACCOUNT_PATH = os.path.join(PLUGIN_DIR, "account.json")
 
+def real_ledger_transaction(func):
+    """Guard real booking reads/writes; nested operations share one batch."""
+    @wraps(func)
+    def wrapper(*args, **kwargs):
+        import inspect
+        import request_receipts as receipts
+        try:
+            request_id, digest = None, None
+            if func.__name__ in ("position_add", "position_close"):
+                bound = inspect.signature(func).bind(*args, **kwargs)
+                bound.apply_defaults()
+                arguments = dict(bound.arguments)
+                request_id = receipts.request_key(
+                    arguments.pop("request_id", None))
+                if request_id is not None:
+                    digest = receipts.fingerprint(func.__name__, arguments)
+            with _real_ledger.access(
+                    (POSITIONS_PATH, TRADES_PATH, ACCOUNT_PATH), DATA_LOCK):
+                if request_id is not None:
+                    previous = receipts.lookup(
+                        _real_ledger.read_json(ACCOUNT_PATH, {}),
+                        request_id, digest)
+                    if previous is not None:
+                        return previous
+                if func.__name__ in ("position_add", "position_close"):
+                    batch = _real_ledger.current_batch()
+                    if batch.read_bytes(os.path.basename(ACCOUNT_PATH)) is None:
+                        return {
+                            "status": "error",
+                            "error_code": "booking_account_missing",
+                            "message": "账户文件缺失；请先核对并设置本金及实际可用资金，未登记买卖"}
+                result = func(*args, **kwargs)
+                if isinstance(result, dict) and result.get("status") == "error":
+                    batch = _real_ledger.current_batch()
+                    if batch.changes:
+                        raise ValueError("real operation failed after staging")
+                elif request_id is not None:
+                    if not isinstance(result, dict):
+                        raise ValueError("booking result must be an object")
+                    account = receipts.record(
+                        _real_ledger.read_json(ACCOUNT_PATH, {}),
+                        request_id, digest, result)
+                    _real_ledger.write_json(ACCOUNT_PATH, account)
+                return result
+        except receipts.ReceiptConflict:
+            return {
+                "status": "error", "error_code": "request_id_conflict",
+                "retry_safe": False,
+                "message": "request_id已用于不同记账请求；本次未执行",
+            }
+        except CommittedOutcomeError:
+            return {
+                "status": "committed_needs_reconciliation",
+                "committed": True, "retry_safe": False,
+                "message": "真实盘账本已提交但回执或清理异常；禁止直接重试",
+            }
+    return wrapper
+
+
+def _booking_request_id(params, cmd):
+    """Resolve only the idempotency key, never copy raw command metadata."""
+    import request_receipts as receipts
+    left = params.get("request_id")
+    right = cmd.get("request_id")
+    if left is not None and right is not None and left != right:
+        raise receipts.ReceiptError("request_id fields disagree")
+    return receipts.request_key(left if left is not None else right)
 
 def log(msg):
     print(f"[GuanLan] {msg}", file=sys.stderr, flush=True)
@@ -98,6 +171,11 @@ def _sina_realtime(symbol):
     low = float(data[5]) if data[5] else 0
     volume = float(data[8]) if data[8] else 0
     amount = float(data[9]) if data[9] else 0
+    import math
+    if (any(not math.isfinite(value) or value < 0 for value in
+            (open_p, prev_close, price, high, low, volume, amount))
+            or price <= 0 or prev_close <= 0):
+        return None
     pct_chg = round((price - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0
     amplitude = round((high - low) / prev_close * 100, 2) if prev_close > 0 else 0
     return {
@@ -112,6 +190,11 @@ def _sina_realtime(symbol):
         "昨收": prev_close,
         "今开": open_p,
         "成交量": volume,
+        "时间戳": (
+            data[30].strip() + " " + data[31].strip()
+            if len(data) > 31 and data[30].strip() and data[31].strip()
+            else None),
+        "source": "sina",
     }
 
 
@@ -133,11 +216,19 @@ def _sina_batch_quotes(symbols):
             r = _req.get(f'https://hq.sinajs.cn/list={query}', headers=headers, timeout=15)
             r.encoding = 'gbk'
             lines = r.text.strip().split('\n')
-            for j, line in enumerate(lines):
+            requested = {_sina_prefix(s): s for s in batch_syms}
+            seen = set()
+            for line in lines:
                 try:
-                    if j >= len(batch_syms):
-                        break
-                    sym = batch_syms[j]
+                    response_key = line.split("=", 1)[0].strip()
+                    prefix = "var hq_str_"
+                    if not response_key.startswith(prefix):
+                        continue
+                    response_code = response_key[len(prefix):]
+                    if response_code not in requested or response_code in seen:
+                        continue
+                    sym = requested[response_code]
+                    seen.add(response_code)
                     parts = line.split('"')
                     if len(parts) < 2:
                         continue
@@ -147,18 +238,90 @@ def _sina_batch_quotes(symbols):
                     name = data[0]
                     prev_close = float(data[2]) if data[2] else 0
                     price = float(data[3]) if data[3] else 0
+                    import math
+                    if (not math.isfinite(price) or not math.isfinite(prev_close)
+                            or price <= 0 or prev_close <= 0):
+                        continue
                     pct_chg = round((price - prev_close) / prev_close * 100, 2) if prev_close > 0 else 0
                     results.append({
                         "代码": sym,
                         "名称": name,
                         "最新价": round(price, 2),
                         "涨跌幅": pct_chg,
+                        "时间戳": (
+                            data[30].strip() + " " + data[31].strip()
+                            if len(data) > 31 and data[30].strip()
+                            and data[31].strip() else None),
+                        "source": "sina",
                     })
                 except:
                     continue
         except:
             continue
         time.sleep(0.3)
+    # 35c(2026-09-30): 新浪命中率<50%视为源故障, 腾讯备胎顶替——持仓更新/查询/压力测试/batch_quotes/日报六调用方同时受益
+    if symbols and len(results) < len(symbols) * 0.5:
+        t = _tencent_batch_quotes(symbols)
+        if t and len(t) > len(results):
+            return t
+    return results
+
+
+def _tencent_batch_quotes(symbols):
+    """[35c 2026-09-30] 腾讯批量行情备胎(qt.gtimg.cn)——新浪hq.sinajs.cn全天空响应事故产物
+    返回与_sina_batch_quotes同构列表(代码/名称/最新价/涨跌幅)+扩展键(昨收/最高/时间戳)
+    关键价格字段非法则整票跳过(宁缺勿假); 量比/换手/流通市值腾讯路径不提供, 不硬造"""
+    if isinstance(symbols, str):
+        symbols = [s.strip() for s in symbols.split(',') if s.strip()]
+    results = []
+    batch_size = 60
+    for i in range(0, len(symbols), batch_size):
+        batch = symbols[i:i+batch_size]
+        codes = ','.join(_sina_prefix(s) for s in batch)
+        try:
+            r = _req.get(f'https://qt.gtimg.cn/q={codes}', timeout=10)
+            r.encoding = 'gbk'
+            requested = {_sina_prefix(s): s for s in batch}
+            seen = set()
+            for line in r.text.strip().split(';'):
+                line = line.strip()
+                if '=' not in line:
+                    continue
+                try:
+                    response_key, payload = line.split('=', 1)
+                    response_key = response_key.strip()
+                    if not response_key.startswith("v_"):
+                        continue
+                    response_code = response_key[2:]
+                    if response_code not in requested or response_code in seen:
+                        continue
+                    sym = requested[response_code]
+                    f = payload.strip().strip('"').split('~')
+                    if len(f) < 35 or f[2] != str(sym):
+                        continue
+                    import math
+                    price = float(f[3]) if f[3] else 0
+                    prev_close = float(f[4]) if f[4] else 0
+                    high = float(f[33]) if f[33] else 0
+                    if (any(not math.isfinite(value) for value in
+                            (price, prev_close, high))
+                            or price <= 0 or prev_close <= 0 or high < 0):
+                        continue
+                    seen.add(response_code)
+                    results.append({
+                        "代码": sym,
+                        "名称": f[1],
+                        "最新价": round(price, 2),
+                        "涨跌幅": round((price - prev_close) / prev_close * 100, 2),
+                        "昨收": round(prev_close, 2),
+                        "最高": round(high, 2),
+                        "时间戳": f[30] or None,
+                        "source": "tencent",
+                    })
+                except (ValueError, IndexError):
+                    continue
+        except Exception:
+            continue
     return results
 
 
@@ -193,6 +356,7 @@ def _get_spot_data():
         df['振幅'] = ((df['最高'] - df['最低']) / prev_close * 100).round(2).fillna(0)
         if '量比' not in df.columns:
             df['量比'] = 0
+        df.attrs['turnover_source_available'] = '换手率' in df.columns
         if '换手率' not in df.columns:
             df['换手率'] = 0
         if '流通市值' not in df.columns:
@@ -205,25 +369,37 @@ def _get_spot_data():
 
 # ========== Tushare HTTP API适配层 ==========
 
-TUSHARE_TOKEN = os.environ.get("TUSHARE_TOKEN", "")
+TUSHARE_TOKEN = read_tushare_token()
 
 
 def _tushare_api(api_name, params, fields=''):
     """Tushare HTTP API封装（不依赖tushare包）"""
+    if not TUSHARE_TOKEN:
+        log("Tushare unavailable: missing TUSHARE_TOKEN configuration")
+        return None
     try:
-        r = _req.post('http://api.tushare.pro', json={
+        r = _req.post('https://api.tushare.pro', json={
             'api_name': api_name,
             'token': TUSHARE_TOKEN,
             'params': params,
             'fields': fields
         }, timeout=15)
+        r.raise_for_status()
         d = r.json()
-        if d.get('code') == 0:
-            return d.get('data', {})
-        log(f"Tushare {api_name}: {d.get('msg', 'unknown error')}")
+        if not isinstance(d, dict):
+            log("Tushare unavailable: invalid response structure")
+            return None
+        if d.get("code") == 0:
+            data = d.get("data")
+            if isinstance(data, dict):
+                return data
+            log("Tushare unavailable: invalid data structure")
+            return None
+        log("Tushare unavailable: upstream business rejection")
         return None
-    except Exception as e:
-        log(f"Tushare {api_name} exception: {e}")
+    except Exception:
+        # Never echo upstream bodies, URLs or exception text containing secrets.
+        log("Tushare unavailable: transport or response failure")
         return None
 
 
@@ -238,17 +414,45 @@ def _ts_code(symbol):
 
 
 def _get_daily_basic(symbol):
-    """获取最新daily_basic数据（PE/PB/市值/换手率/量比）"""
+    """Return the newest dated daily_basic row, never a future-dated row."""
+    from datetime import date, timedelta
+    today = date.today()
     ts_code = _ts_code(symbol)
-    data = _tushare_api('daily_basic',
-        {'ts_code': ts_code, 'start_date': '20260101', 'end_date': '20261231'},
+    data = _tushare_api(
+        'daily_basic',
+        {'ts_code': ts_code,
+         'start_date': (today - timedelta(days=370)).strftime('%Y%m%d'),
+         'end_date': today.strftime('%Y%m%d')},
         'ts_code,trade_date,close,pe,pe_ttm,pb,ps,ps_ttm,dv_ratio,total_mv,circ_mv,turnover_rate,volume_ratio')
     if not data or not data.get('items'):
-        log(f"Tushare daily_basic无数据({symbol})，尝试AKShare容灾")
+        log("Tushare daily_basic unavailable; attempting fallback")
         return _ak_daily_basic(symbol)
-    fields = data.get('fields', [])
-    latest = data['items'][0]
-    result = dict(zip(fields, latest))
+    fields = data.get('fields')
+    if (not isinstance(fields, list)
+            or any(not isinstance(field, str) for field in fields)
+            or len(set(fields)) != len(fields)
+            or not {'ts_code', 'trade_date'}.issubset(fields)):
+        return {}
+    candidates = []
+    for item in data['items']:
+        if not isinstance(item, (list, tuple)) or len(item) != len(fields):
+            return {}
+        row = dict(zip(fields, item))
+        raw_date = row.get('trade_date')
+        if not isinstance(raw_date, str) or len(raw_date) != 8:
+            return {}
+        try:
+            trade_day = datetime.strptime(raw_date, '%Y%m%d').date()
+        except ValueError:
+            return {}
+        if row.get('ts_code') == ts_code and trade_day <= today:
+            candidates.append(row)
+    if not candidates:
+        return {}
+    result = max(candidates, key=lambda row: row['trade_date'])
+    result['_source'] = 'Tushare daily_basic'
+    result['as_of_date'] = result['trade_date']
+    # Source date is disclosed; recency against a trading calendar is separate.
     return result
 
 
@@ -379,26 +583,43 @@ def _ak_capital_flow(symbol):
         if df is None or df.empty:
             return None
 
-        df = df.tail(5).copy()
+        import math
+        from datetime import date
         recent_flow = []
+        seen_dates = set()
         for _, row in df.iterrows():
-            main_net = round(float(row.get('主力净流入-净额', 0) or 0) / 10000, 2)
-            sm_net = round(float(row.get('小单净流入-净额', 0) or 0) / 10000, 2)
-            md_net = round(float(row.get('中单净流入-净额', 0) or 0) / 10000, 2)
-            lg_net = round(float(row.get('大单净流入-净额', 0) or 0) / 10000, 2)
-            elg_net = round(float(row.get('超大单净流入-净额', 0) or 0) / 10000, 2)
             trade_date = str(row.get('日期', '')).replace('-', '')
-
+            if (len(trade_date) != 8 or not trade_date.isascii()
+                    or not trade_date.isdigit()):
+                raise ValueError("invalid flow date")
+            trade_day = datetime.strptime(trade_date, '%Y%m%d').date()
+            if trade_day > date.today() or trade_date in seen_dates:
+                raise ValueError("future or duplicate flow date")
+            seen_dates.add(trade_date)
+            amounts = {}
+            for field in (
+                    '主力净流入-净额', '小单净流入-净额', '中单净流入-净额',
+                    '大单净流入-净额', '超大单净流入-净额'):
+                raw = row.get(field)
+                if raw is None or isinstance(raw, bool):
+                    raise ValueError("missing flow amount")
+                value = float(raw)
+                if not math.isfinite(value):
+                    raise ValueError("nonfinite flow amount")
+                amounts[field] = value / 10000
+            lg_net = amounts['大单净流入-净额']
+            elg_net = amounts['超大单净流入-净额']
             recent_flow.append({
-                '日期': f'{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}' if len(trade_date) == 8 else str(row.get('日期', '')),
-                '主力净流入': main_net,
-                '小单净流入': sm_net,
-                '中单净流入': md_net,
-                '大单净流入': lg_net,
-                '超大单净流入': elg_net,
+                '日期': trade_day.isoformat(),
+                '主力净流入': round(lg_net + elg_net, 2),
+                '上游主力净流入': round(amounts['主力净流入-净额'], 2),
+                '小单净流入': round(amounts['小单净流入-净额'], 2),
+                '中单净流入': round(amounts['中单净流入-净额'], 2),
+                '大单净流入': round(lg_net, 2),
+                '超大单净流入': round(elg_net, 2),
             })
-
-        recent_flow.reverse()  # 最新在前
+        recent_flow.sort(key=lambda item: item['日期'], reverse=True)
+        recent_flow = recent_flow[:5]
 
         if not recent_flow:
             return None
@@ -414,10 +635,14 @@ def _ak_capital_flow(symbol):
                 '大单净流入万': latest.get('大单净流入', 0),
                 '方向': '主力流入' if latest.get('主力净流入', 0) > 0 else '主力流出'
             },
-            '_source': 'AKShare'
+            '_source': 'AKShare',
+            'flow_definition': 'large_plus_extra_large_net',
+            'flow_definition_version': 2,
+            'as_of_date': latest['日期'],
+            'flow_note': '主力为大单加特大单策略代理；备用源分单标准不保证与主源完全等价，上游主力另列'
         }
-    except Exception as e:
-        log(f'AKShare capital_flow容灾失败: {e}')
+    except Exception:
+        log('AKShare capital_flow unavailable: transport or data validation failure')
     return None
 
 
@@ -562,23 +787,28 @@ def _ak_block_trade(symbol, days=5):
         end_date = datetime.now().strftime('%Y%m%d')
 
         try:
-            df = safe_request(ak.stock_dzjy_mrmx, symbol='股票', start_date=start_date, end_date=end_date)
+            df = safe_request(ak.stock_dzjy_mrmx, symbol='A股', start_date=start_date, end_date=end_date)
         except Exception:
-            df = None
-            
-        if df is None or df.empty:
-            return {'symbol': symbol, 'message': f'近{days}天无大宗交易或数据源解析异常'}
+            return {'symbol': symbol, 'error': '大宗交易取数或解析失败，不能确认有无记录',
+                    'error_code': 'block_trade_source_unavailable'}
+        if df is None:
+            return {'symbol': symbol, 'error': '大宗交易数据源未返回有效表格',
+                    'error_code': 'block_trade_source_unavailable'}
+        if df.empty:
+            return {'symbol': symbol, 'count': 0, 'records': [],
+                    'message': f'近{days}天数据源返回空表'}
 
         if symbol == '__all__':
             df_filtered = df
         else:
             code_col = None
-            for col in ['股票代码', '代码']:
+            for col in ['证券代码', '股票代码', '代码']:
                 if col in df.columns:
                     code_col = col
                     break
             if not code_col:
-                return {'symbol': symbol, 'message': '大宗交易列名未识别', 'columns': list(df.columns)}
+                return {'symbol': symbol, 'error': '大宗交易代码列未识别',
+                        'error_code': 'block_trade_schema_invalid'}
             df_filtered = df[df[code_col].astype(str) == str(symbol)]
             
         if df_filtered.empty:
@@ -606,64 +836,103 @@ def _ak_block_trade(symbol, days=5):
 
 
 def _ak_share_unlock():
-    """AKShare: 获取限售解禁排名（全市场，返回近30天）"""
+    """Recent 30-calendar-day release details, not a volume-contraction ranking."""
+    from datetime import timezone
     try:
-        df = safe_request(ak.stock_rank_cxsl_ths)
-        if df is None or df.empty:
-            return []
-
+        today = datetime.now(timezone(timedelta(hours=8))).date()
+        start = today - timedelta(days=30)
+        df = safe_request(
+            ak.stock_restricted_release_detail_em,
+            start_date=start.strftime('%Y%m%d'),
+            end_date=today.strftime('%Y%m%d'))
+        if not isinstance(df, pd.DataFrame):
+            raise ValueError("invalid release response")
+        required = {'股票代码', '解禁时间', '解禁数量', '限售股类型'}
+        if not required.issubset(df.columns):
+            raise ValueError("invalid release schema")
         results = []
         for _, row in df.iterrows():
+            code = str(row['股票代码']).strip()
+            if len(code) != 6 or not code.isascii() or not code.isdigit():
+                raise ValueError("invalid release identity")
+            day = datetime.fromisoformat(str(row['解禁时间']).strip()).date()
+            if not start <= day <= today:
+                raise ValueError("release date outside requested window")
             entry = {}
             for col in df.columns:
+                if col == '解禁后20日涨跌幅':
+                    continue
                 val = row[col]
-                # M10d-2026-09-08: NaN不再转0 -- 停牌股0价曾算出-100%假跌幅
                 if pd.api.types.is_numeric_dtype(df[col]):
-                    entry[col] = round(float(val), 2) if pd.notna(val) else None
+                    if pd.isna(val):
+                        entry[col] = None
+                    else:
+                        number = float(val)
+                        if not np.isfinite(number):
+                            raise ValueError("invalid release numeric value")
+                        entry[col] = number
                 else:
                     entry[col] = str(val) if pd.notna(val) else ''
-            if entry.get('最新价') is None:
-                entry['停牌标记'] = 'price_null(suspect suspended)'
+            entry['股票代码'] = code
+            entry['解禁时间'] = day.isoformat()
             results.append(entry)
         return results
-    except Exception as e:
-        log(f'限售解禁数据获取失败: {e}')
-        return []
+    except Exception:
+        raise ValueError("限售解禁取数或数据校验失败，不能确认有无解禁") from None
 
 
 def _ak_earnings_forecast(date=None):
     """AKShare: 获取业绩预告（按报告期）"""
     try:
         if not date:
-            now = datetime.now()
-            y = now.year
-            m = now.month
-            if m <= 4:
-                date = f'{y-1}0930'  # 去年三季报
-            elif m <= 7:
-                date = f'{y-1}1231'  # 去年年报
-            elif m <= 10:
-                date = f'{y}0331'  # 一季报
+            from datetime import timezone
+            now = datetime.now(timezone(timedelta(hours=8)))
+            y, m = now.year, now.month
+            if m <= 3:
+                date = f'{y-1}1231'
+            elif m <= 6:
+                date = f'{y}0331'
+            elif m <= 9:
+                date = f'{y}0630'
             else:
-                date = f'{y}0630'  # 中报
+                date = f'{y}0930'
 
         df = safe_request(ak.stock_yjyg_em, date=date)
         if df is None or df.empty:
             return [], date
 
+        from datetime import timezone
+        cutoff = datetime.now(timezone(timedelta(hours=8))).date()
         results = []
+        excluded_dates = 0
         for _, row in df.iterrows():
+            # Report period is not an announcement cutoff. An upstream
+            # future-dated record is not evidence of information available now.
+            raw_ann = row.get("公告日期")
+            try:
+                stamp = str(raw_ann).strip()
+                announced = (
+                    datetime.strptime(stamp, "%Y%m%d").date()
+                    if len(stamp) == 8 and stamp.isascii() and stamp.isdigit()
+                    else datetime.fromisoformat(stamp).date())
+                if announced > cutoff:
+                    raise ValueError("future announcement")
+            except (ValueError, TypeError, OverflowError):
+                excluded_dates += 1
+                continue
             entry = {}
             for col in df.columns:
                 val = row[col]
-                # M10d-2026-09-08: NaN不再转0 -- 停牌股0价曾算出-100%假跌幅
+                # Missing numeric data stays unknown, never zero.
                 if pd.api.types.is_numeric_dtype(df[col]):
                     entry[col] = round(float(val), 2) if pd.notna(val) else None
                 else:
                     entry[col] = str(val) if pd.notna(val) else ''
-            if entry.get('最新价') is None:
-                entry['停牌标记'] = 'price_null(suspect suspended)'
+            if "最新价" in df.columns and entry.get("最新价") is None:
+                entry["报价状态"] = "缺失；停牌状态未知"
             results.append(entry)
+        if excluded_dates:
+            log("业绩预告已排除未来或无效公告日期记录: %d" % excluded_dates)
         return results, date
     except Exception as e:
         log(f'业绩预告数据获取失败: {e}')
@@ -672,6 +941,27 @@ def _ak_earnings_forecast(date=None):
 
 def scan_events(symbols=None, days=5):
     """事件型异动扫描 - 4类检测（盘后/非实时）"""
+    if isinstance(symbols, str):
+        text = symbols.strip()
+        if text.startswith('['):
+            try:
+                symbols = json.loads(text)
+            except (ValueError, TypeError):
+                return {'error': 'symbols数组格式无效',
+                        'error_code': 'invalid_event_symbols'}
+            if not isinstance(symbols, list):
+                return {'error': 'symbols必须为股票代码数组',
+                        'error_code': 'invalid_event_symbols'}
+        else:
+            symbols = [value.strip() for value in text.split(',')] if text else []
+    if symbols is not None and (
+            not isinstance(symbols, list)
+            or any(not isinstance(value, str)
+                   or len(value.strip()) != 6
+                   or not value.strip().isascii()
+                   or not value.strip().isdigit() for value in symbols)):
+        return {'error': 'symbols须包含六位股票代码',
+                'error_code': 'invalid_event_symbols'}
     if not symbols:
         wl = read_watchlist()
         symbols = [s['code'] for s in wl]
@@ -679,8 +969,9 @@ def scan_events(symbols=None, days=5):
     if not symbols:
         return {'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'), 'message': '自选股为空'}
 
+    symbols = list(dict.fromkeys(str(value).strip() for value in symbols))
     results = {}
-    symbols_str = [str(s) for s in symbols]
+    symbols_str = symbols
 
     # 1. 龙虎榜异动
     try:
@@ -696,11 +987,17 @@ def scan_events(symbols=None, days=5):
     # 2. 大宗交易
     try:
         bt_data = _ak_block_trade('__all__', days)
-        if 'records' in bt_data:
-            bt_filtered = [r for r in bt_data['records'] if str(r.get('股票代码', r.get('代码', ''))) in symbols_str]
+        if bt_data.get('error'):
+            results['大宗交易'] = {
+                'error': '大宗交易数据不可用，不能确认有无事件',
+                'error_code': bt_data.get('error_code', 'block_trade_source_unavailable')}
+        elif 'records' in bt_data:
+            bt_filtered = [r for r in bt_data['records'] if str(
+                r.get('证券代码', r.get('股票代码', r.get('代码', '')))) in symbols_str]
             results['大宗交易'] = {'count': len(bt_filtered), 'records': bt_filtered}
         else:
-            results['大宗交易'] = {'count': 0, 'message': f'近{days}天无大宗交易'}
+            results['大宗交易'] = {'error': '大宗交易返回结构未确认',
+                                  'error_code': 'block_trade_schema_invalid'}
     except Exception as e:
         results['大宗交易'] = {'error': str(e)[:80]}
 
@@ -805,30 +1102,71 @@ def _ak_sentiment_detail(symbol):
 
 
 def _ak_sentiment_market_rank():
-    """AKShare: 全市场人气排名TOP100"""
+    """Eastmoney popularity ranks with optional code-matched Sina/Tencent quotes."""
     try:
-        df = safe_request(ak.stock_hot_rank_em)
-        if df is None or df.empty:
-            return []
+        response = _req.post(
+            "https://emappdata.eastmoney.com/stockrank/getAllCurrentList",
+            json={"appId": "appId01",
+                  "globalId": "786e4c21-70dc-435a-93bb-38",
+                  "marketType": "", "pageNo": 1, "pageSize": 100},
+            timeout=(5, 10))
+        response.raise_for_status()
+        payload = response.json()
+        rows = payload.get("data") if isinstance(payload, dict) else None
+        if not isinstance(rows, list):
+            raise ValueError("invalid rank response")
+        results, codes, ranks = [], set(), set()
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("invalid rank row")
+            code, rank = row.get("sc"), row.get("rk")
+            if (not isinstance(code, str) or len(code) != 8
+                    or code[:2] not in ("SH", "SZ", "BJ")
+                    or not code[2:].isascii() or not code[2:].isdigit()
+                    or isinstance(rank, bool) or not isinstance(rank, int)
+                    or not 1 <= rank <= 100 or code in codes or rank in ranks):
+                raise ValueError("invalid rank identity")
+            codes.add(code)
+            ranks.add(rank)
+            results.append({
+                "当前排名": rank, "代码": code, "股票名称": None,
+                "最新价": None, "涨跌额": None, "涨跌幅": None,
+                "排名数据源": "东方财富人气榜",
+                "报价状态": "缺失；停牌状态未知",
+                "报价源": None, "报价时间": None})
+        if results and ranks != set(range(1, len(results) + 1)):
+            raise ValueError("rank sequence incomplete")
+        results.sort(key=lambda row: row["当前排名"])
+    except Exception:
+        raise ValueError("全市场人气排名取数或解析失败，不能确认榜单") from None
 
-        results = []
-        for _, row in df.head(100).iterrows():
-            entry = {}
-            for col in df.columns:
-                val = row[col]
-                # M10d-2026-09-08: NaN不再转0 -- 停牌股0价曾算出-100%假跌幅
-                if pd.api.types.is_numeric_dtype(df[col]):
-                    entry[col] = round(float(val), 2) if pd.notna(val) else None
-                else:
-                    entry[col] = str(val) if pd.notna(val) else ''
-            if entry.get('最新价') is None:
-                entry['停牌标记'] = 'price_null(suspect suspended)'
-            results.append(entry)
-        return results
-    except Exception as e:
-        log(f'全市场人气排名获取失败: {e}')
-        return []
-
+    # Quote enrichment must not invalidate a successfully retrieved ranking.
+    try:
+        quotes = _sina_batch_quotes([row["代码"][2:] for row in results]) if results else []
+        quote_map = {}
+        for quote in quotes:
+            code = quote.get("代码")
+            if code not in quote_map:
+                quote_map[code] = quote
+        for row in results:
+            quote = quote_map.get(row["代码"][2:])
+            if not quote:
+                continue
+            price, change = quote.get("最新价"), quote.get("涨跌幅")
+            if (isinstance(price, bool) or isinstance(change, bool)
+                    or not isinstance(price, (int, float))
+                    or not isinstance(change, (int, float))
+                    or not np.isfinite(price) or not np.isfinite(change)
+                    or price <= 0):
+                continue
+            row.update({
+                "股票名称": quote.get("名称"), "最新价": price,
+                "涨跌幅": change, "报价状态": "已取得报价；时效请核对源时间",
+                "报价源": quote.get("source"), "报价时间": quote.get("时间戳")})
+            # Rounded percent changes cannot reconstruct an exact price change.
+    except Exception:
+        pass
+    return results
 
 def sentiment_scan(symbol=None, symbols=None):
     """舆情分析主入口 — 个股或批量"""
@@ -837,6 +1175,7 @@ def sentiment_scan(symbol=None, symbols=None):
 
     target_symbols = [symbol] if symbol else symbols
     results = []
+    rank_warning = None
 
     for sym in target_symbols:
         detail = _ak_sentiment_detail(str(sym))
@@ -849,8 +1188,10 @@ def sentiment_scan(symbol=None, symbols=None):
             if rank_all:
                 rank_map = {}
                 for item in rank_all:
-                    code = str(item.get('股票代码', ''))
-                    if code:
+                    code = str(item.get('代码', item.get('股票代码', ''))).strip()
+                    if len(code) == 8 and code[:2] in ('SH', 'SZ', 'BJ'):
+                        code = code[2:]
+                    if len(code) == 6 and code.isascii() and code.isdigit():
                         rank_map[code] = item
                 
                 for r in results:
@@ -858,13 +1199,17 @@ def sentiment_scan(symbol=None, symbols=None):
                     if sym in rank_map:
                         r['市场人气排名'] = rank_map[sym]
         except Exception:
-            pass
+            rank_warning = '市场人气排名补充取数失败；个股结果保留，未确认市场排名'
 
-    return {
+    response = {
         'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
         'count': len(results),
         'results': results
     }
+    if rank_warning is not None:
+        response['market_rank_available'] = False
+        response['market_rank_warning'] = rank_warning
+    return response
 
 
 # ========== 组合压力测试 v3.1 ==========
@@ -1002,9 +1347,31 @@ def stress_test(scenario='crash_2015', drop_pct=None, custom_drop=None):
     quotes = _sina_batch_quotes(symbols)
     quote_map = {q.get('代码'): q for q in quotes}
     
+    # A partial quote set cannot represent the complete held portfolio.
+    import math
+    missing_quotes = []
+    for position in active:
+        code = position["symbol"]
+        observation = quote_map.get(code)
+        try:
+            raw_price = observation.get("最新价") if isinstance(observation, dict) else None
+            if isinstance(raw_price, bool):
+                raise ValueError("boolean quote")
+            price = float(raw_price)
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("invalid quote")
+        except (TypeError, ValueError, OverflowError):
+            missing_quotes.append(code)
+    if missing_quotes:
+        return {
+            "error": "持仓报价缺失或非法，不能计算完整组合压力估值",
+            "error_code": "stress_quotes_incomplete",
+            "valuation_complete": False,
+            "missing_quotes": missing_quotes,
+            "summary": {"current_assets": None, "stressed_assets": None}}
     betas = _get_sector_betas()
     results = []
-    
+
     for pos in active:
         sym = pos['symbol']
         cost = pos['cost']
@@ -1111,7 +1478,8 @@ def sector_rotation():
         industries = ind_data.get('items', [])
         results = []
 
-        # Step2: 每个行业拉20天日线 (M9修复2026-09-07: index_daily对申万代码静默0行, 改走申万官网 _sw_hist)
+        # Same bounded concurrency and coverage contract as industry ranking.
+        _prefetch_sw_histories(industries)
         for code, name in industries:
             time.sleep(0.12)
             hist = _sw_hist(code, tail_n=22)
@@ -1193,7 +1561,7 @@ def sector_rotation():
         return {
             'mode': 'full_rotation',
             'scan_time': datetime.now().strftime('%Y-%m-%d %H:%M:%S'),
-            'data_source': 'Tushare(申万一级)',
+            'data_source': '申万官网行情（AKShare）；行业名单：Tushare SW2021',
             'total_sectors': len(results),
             'top5_5d': top5,
             'bot5_5d': bot5,
@@ -1214,51 +1582,20 @@ def sector_rotation():
 # ========== 市场温度计 v3.2 ==========
 
 def market_temperature():
-    """市场温度计 — 涨跌停/涨跌比/换手率/成交额 → 市场情绪综合判断"""
+    """最近已收盘交易日温度；非盘中实时指标。"""
     try:
-        today = datetime.now().strftime('%Y%m%d')
-        
-        # 1. 涨跌停数据（AKShare东财涨停池）
-        zt_count = 0
-        dt_count = 0
-        zt_sectors = []
-        try:
-            zt_df = safe_request(ak.stock_zt_pool_em, date=today)
-            if zt_df is not None and not zt_df.empty:
-                zt_count = len(zt_df)
-                # 统计涨停股所属行业
-                if '所属行业' in zt_df.columns:
-                    zt_sectors = zt_df['所属行业'].value_counts().head(5).to_dict()
-        except Exception:
-            pass
-        
-        try:
-            dt_df = safe_request(ak.stock_zt_pool_dtgc_em, date=today)
-            if dt_df is not None and not dt_df.empty:
-                dt_count = len(dt_df)
-        except Exception:
-            pass
-
-        # 2. 全市场行情统计
-        df = _get_spot_data()
-        if df is None or df.empty:
-            return {"error": "全市场行情数据获取失败"}
-        
-        up = int((df['涨跌幅'] > 0).sum())
-        down = int((df['涨跌幅'] < 0).sum())
-        flat = int((df['涨跌幅'] == 0).sum())
-        up_down_ratio = round(up / max(down, 1), 2)
-        
-        # 换手率中位数
-        turnover_vals = pd.to_numeric(df.get('换手率', pd.Series([0]*len(df))), errors='coerce')
-        turnover_median = round(float(turnover_vals.median()), 2)
-        
-        # 两市成交额（AKShare的成交额单位是元，转亿）
-        if '成交额' in df.columns:
-            total_amount = pd.to_numeric(df['成交额'], errors='coerce').sum()
-            total_amount_yi = round(float(total_amount) / 100000000, 0)
-        else:
-            total_amount_yi = 0
+        from temperature_data import load_inputs
+        inputs = load_inputs(
+            _tushare_api,
+            lambda **kw: safe_request(ak.stock_zt_pool_em, **kw),
+            lambda **kw: safe_request(ak.stock_zt_pool_dtgc_em, **kw))
+        today = inputs["date"]
+        up, down, flat = inputs["advance"], inputs["decline"], inputs["flat"]
+        up_down_ratio = inputs["up_down_ratio"]
+        turnover_median = inputs["turnover_median"]
+        total_amount_yi = inputs["total_amount_yi"]
+        zt_count, dt_count = inputs["limit_up"], inputs["limit_down"]
+        zt_sectors = inputs["hot_sectors"]
 
         # 3. 温度计评分（0-100，50为中性）
         score = 50.0
@@ -1297,10 +1634,20 @@ def market_temperature():
             "turnover_median": turnover_median,
             "total_amount_yi": total_amount_yi,
             "hot_sectors": zt_sectors,
-            "hs300_change": get_hs300_change()
+            "mode": inputs["mode"],
+            "sample_count": inputs["sample_count"],
+            "sample_scope": inputs["sample_scope"],
+            "data_source": inputs["data_source"],
+            "date_verification": inputs["date_verification"],
+            "coverage_note": inputs["coverage_note"],
+            "usage_note": "日终描述性评分，不是实时行情或自动下单授权"
         }
-    except Exception as e:
-        return {"error": f"市场温度计计算失败: {str(e)[:80]}"}
+    except Exception:
+        return {
+            "error": "日终温度必要数据缺失、日期或样本校验失败；未评分",
+            "error_code": "temperature_inputs_unavailable",
+            "score": None, "sentiment": None,
+            "turnover_median": None, "coverage_complete": False}
 
 
 # ========== 月度复盘 v3.2 ==========
@@ -1446,22 +1793,55 @@ def watchlist_show():
 
 # ========== 持仓监控管理 ==========
 
+@real_ledger_transaction
 def read_positions():
-    if not os.path.exists(POSITIONS_PATH):
-        return []
     try:
-        with open(POSITIONS_PATH, 'r', encoding='utf-8') as f:
-            data = json.load(f)
-            return data.get("positions", [])
-    except Exception:
-        return []
+        if _real_ledger.current_batch() is not None:
+            data = _real_ledger.read_json(POSITIONS_PATH, {"positions": []})
+        else:
+            if not os.path.exists(POSITIONS_PATH):
+                return []
+            with open(POSITIONS_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        if not isinstance(data, dict) or not isinstance(data.get("positions"), list):
+            raise ValueError("positions must be an explicit list")
+        import math
+        for row in data["positions"]:
+            if (not isinstance(row, dict)
+                    or not isinstance(row.get("symbol"), str)
+                    or not row["symbol"]
+                    or row.get("status") not in ("active", "closed")):
+                raise ValueError("invalid position identity or status")
+            if row["status"] != "active":
+                continue
+            quantity, cost = row.get("shares"), row.get("cost")
+            if (isinstance(quantity, bool) or not isinstance(quantity, int)
+                    or quantity <= 0):
+                raise ValueError("active position requires positive integer shares")
+            if (isinstance(cost, bool) or not isinstance(cost, (int, float))
+                    or not math.isfinite(cost) or cost <= 0):
+                raise ValueError("active position requires finite positive cost")
+            for field in ("stop_loss", "target", "atr_stop_loss", "hwm"):
+                if field not in row:
+                    continue
+                value = row[field]
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value) or value < 0):
+                    raise ValueError("invalid position risk field")
+        return data["positions"]
+    except Exception as exc:
+        raise ValueError("real positions unreadable; refusing operation") from exc
 
 
+@real_ledger_transaction
 def save_positions(positions):
     data = {
         "updated": datetime.now().strftime("%Y-%m-%d"),
         "positions": positions
     }
+    if _real_ledger.current_batch() is not None:
+        _real_ledger.write_json(POSITIONS_PATH, data)
+        return
     with open(POSITIONS_PATH, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
@@ -1469,45 +1849,119 @@ def save_positions(positions):
 
 # ========== 交易记录管理 ==========
 
+@real_ledger_transaction
 def read_trades():
-    if not os.path.exists(TRADES_PATH):
-        return []
     try:
-        with open(TRADES_PATH, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return []
+        if _real_ledger.current_batch() is not None:
+            data = _real_ledger.read_json(TRADES_PATH, [])
+        else:
+            if not os.path.exists(TRADES_PATH):
+                return []
+            with open(TRADES_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        if not isinstance(data, list) or any(
+                not isinstance(row, dict) for row in data):
+            raise ValueError("trades must be a list of objects")
+        import math
+        for row in data:
+            if row.get("action") not in ("buy", "sell"):
+                continue
+            if not isinstance(row.get("symbol"), str) or not row["symbol"]:
+                raise ValueError("trade symbol required")
+            trade_date = row.get("date")
+            if not isinstance(trade_date, str):
+                raise ValueError("trade date required")
+            if datetime.strptime(trade_date, "%Y-%m-%d").strftime("%Y-%m-%d") != trade_date:
+                raise ValueError("invalid trade date")
+            quantity = row.get("shares")
+            if (isinstance(quantity, bool) or not isinstance(quantity, int)
+                    or quantity <= 0):
+                raise ValueError("invalid trade quantity")
+            for field in ("price", "pnl") if row["action"] == "sell" else ("price",):
+                value = row.get(field)
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        or (field == "price" and value <= 0)):
+                    raise ValueError("invalid trade numeric field")
+        return data
+    except Exception as exc:
+        raise ValueError("real trades unreadable; refusing operation") from exc
 
 
+@real_ledger_transaction
 def save_trades(trades):
+    if _real_ledger.current_batch() is not None:
+        _real_ledger.write_json(TRADES_PATH, trades)
+        return
     with open(TRADES_PATH, 'w', encoding='utf-8') as f:
         json.dump(trades, f, ensure_ascii=False, indent=2)
 
+@real_ledger_transaction
 def read_account():
-    """读取账户资金信息"""
-    _path = ACCOUNT_PATH
-    if not os.path.exists(_path):
-        return {"total_capital": 0, "available_cash": 0, "updated": ""}
+    """读取指定账户；损坏时拒绝操作，禁止回退其他账户路径。"""
+    missing = {"total_capital": 0, "available_cash": 0, "updated": ""}
     try:
-        with open(_path, 'r', encoding='utf-8') as f:
-            return json.load(f)
-    except Exception:
-        return {"total_capital": 0, "available_cash": 0, "updated": ""}
+        if _real_ledger.current_batch() is not None:
+            data = _real_ledger.read_json(ACCOUNT_PATH, missing)
+        else:
+            if not os.path.exists(ACCOUNT_PATH):
+                return missing
+            with open(ACCOUNT_PATH, 'r', encoding='utf-8') as f:
+                data = json.load(f)
+        if not isinstance(data, dict) or any(
+                key not in data for key in ("total_capital", "available_cash")):
+            raise ValueError("account requires explicit capital and cash")
+        import math
+        for key in ("total_capital", "available_cash"):
+            value = data[key]
+            if (isinstance(value, bool) or not isinstance(value, (int, float))
+                    or not math.isfinite(value)):
+                raise ValueError("account amount must be a finite number")
+        if data["total_capital"] < 0:
+            raise ValueError("account capital cannot be negative")
+        if ("_booking_receipts_v1" in data
+                and not isinstance(data["_booking_receipts_v1"], dict)):
+            raise ValueError("account receipt ledger invalid")
+        return data
+    except Exception as exc:
+        raise ValueError("real account unreadable; refusing operation") from exc
 
 
+@real_ledger_transaction
 def save_account(data):
-    _path = ACCOUNT_PATH
-    if not os.path.exists(os.path.dirname(_path)):
-        os.makedirs(os.path.dirname(_path), exist_ok=True)
-    with open(_path, 'w', encoding='utf-8') as f:
+    # A missing destination directory must fail, never redirect another ledger.
+    if _real_ledger.current_batch() is not None:
+        _real_ledger.write_json(ACCOUNT_PATH, data)
+        return
+    with open(ACCOUNT_PATH, 'w', encoding='utf-8') as f:
         json.dump(data, f, ensure_ascii=False, indent=2)
 
 
+@real_ledger_transaction
 @synchronized_data
 def account_set(total_capital, available_cash=None):
     """设置账户总资金和可用资金"""
+    import math
+    try:
+        if isinstance(total_capital, bool) or isinstance(available_cash, bool):
+            raise ValueError("boolean account input")
+        total_capital = float(total_capital)
+        if not math.isfinite(total_capital) or total_capital < 0:
+            raise ValueError("invalid capital")
+        if available_cash is not None:
+            available_cash = float(available_cash)
+            if not math.isfinite(available_cash):
+                raise ValueError("invalid cash")
+    except (ValueError, TypeError, OverflowError):
+        return {"status": "error", "message": "本金须为有限非负数，可用资金须为有限数值"}
     acct = read_account()
     old_capital = acct.get("total_capital", 0)
+    if available_cash is None and old_capital == 0:
+        if (any(p.get("status") == "active" for p in read_positions())
+                or any(t.get("action") in ("buy", "sell") for t in read_trades())):
+            return {
+                "status": "error", "error_code": "explicit_cash_required",
+                "message": "已有持仓或成交记录；首次设置本金须显式提供实际available_cash，不自动推算"}
     acct["total_capital"] = float(total_capital)
     if available_cash is not None:
         acct["available_cash"] = float(available_cash)
@@ -1539,12 +1993,14 @@ def _get_name(symbol):
 _RISK_DEFAULTS = {
     "single_trade_risk_pct": 0.02,
     "daily_circuit_breaker_pct": 0.03,
+    "monthly_risk_cap_pct": 0.06,
     "consecutive_loss_halt": 3,
     "min_lot_threshold": 0.5,
 }
 
 def _load_risk_config():
     """Merge override file onto embedded defaults. Missing/corrupt file -> defaults (gate never silently off)."""
+    import math
     cfg = dict(_RISK_DEFAULTS)
     try:
         with open(os.path.join(PLUGIN_DIR, "risk_config.json"), encoding="utf-8") as _rf:
@@ -1552,20 +2008,28 @@ def _load_risk_config():
         if isinstance(_override, dict):
             for _k, _v in _override.items():
                 if not str(_k).startswith("_") and _k in cfg:
-                    # 22c C-fix (Nova audit r4 + 观澜 rule): config must be sane, not just present
+                    # Reject malformed values before any threshold arithmetic.
+                    if (isinstance(_v, bool) or not isinstance(_v, (int, float))
+                            or not math.isfinite(_v)):
+                        sys.stderr.write("[risk_config] invalid numeric field: " + _k + "; default kept\n")
+                        continue
+                    if _k == "monthly_risk_cap_pct" and not 0 < _v <= 1:
+                        sys.stderr.write("[risk_config] invalid monthly risk cap; default kept\n")
+                        continue
+                    # 22c C-fix: config must be sane, not just present.
                     if _k in ("single_trade_risk_pct", "daily_circuit_breaker_pct"):
                         if not (isinstance(_v, (int, float)) and not isinstance(_v, bool) and 0 < float(_v) <= 0.1):
-                            sys.stderr.write(f"[risk_config] REJECT {_k}={_v!r} outside (0, 0.1] - default kept (fail-safe)\n")
+                            sys.stderr.write(f"[risk_config] REJECT {_k} outside (0, 0.1] - default kept\n")
                             continue
                         if float(_v) > 0.03:
                             sys.stderr.write(f"[risk_config] NOTE {_k}={_v} above recommended 2-3% band - risk loosening is a behavior event, logged\n")
                     elif _k == "consecutive_loss_halt":
                         if not (isinstance(_v, int) and not isinstance(_v, bool) and _v >= 1):
-                            sys.stderr.write(f"[risk_config] REJECT {_k}={_v!r} (need int>=1) - default kept\n")
+                            sys.stderr.write(f"[risk_config] REJECT {_k} (need int>=1) - default kept\n")
                             continue
                     elif _k == "min_lot_threshold":
                         if not (isinstance(_v, (int, float)) and not isinstance(_v, bool) and 0 < float(_v) <= 1):
-                            sys.stderr.write(f"[risk_config] REJECT {_k}={_v!r} outside (0, 1] - default kept\n")
+                            sys.stderr.write(f"[risk_config] REJECT {_k} outside (0, 1] - default kept\n")
                             continue
                     cfg[_k] = _v
     except Exception:
@@ -1578,8 +2042,22 @@ def _mk_ex_proof_override(ov):
                        "p3_flow_continuity": "overridden"},
             "authority": f"人工终裁override by {ov.get('override_by','?')}: {ov.get('override_reason','')[:80]}"}
 
-def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None):
-    """Pre-trade gate. Returns rejection dict (with full calculation for diary citation) or None to pass."""
+def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None, ledger=None):
+    """Pre-trade gate. Returns rejection dict (with full calculation for diary citation) or None to pass.
+    ledger=None -> real账本原路径(行为不变); 注入态必须全键携带 trades/capital/positions(cleared_until可选默认""),
+    缺键=契约错误显式拒单(宁拒勿默)——Nova P1判例: 键缺失≠值为零; 补默认会静默美化(positions缺→敞口0放行月度闸),
+    与capital缺→拒单可见不对称, 故统一缺键即拒 (洛书升级 2026-10-14).
+    capital=0(耗尽)是合法状态拒单可见; 注入判断一律is not None——or会静默穿透回real (洛书 2026-10-14).
+    Rule6市场闸不参数化: 市场状态是环境非账本属性 (瑶序裁决2026-10-14)."""
+    if ledger is not None:
+        _missing = [k for k in ("trades", "capital", "positions") if k not in ledger]
+        if _missing:
+            return {"status": "error", "gate": "ledger_contract",
+                    "message": f"ledger注入契约错误: 缺键{_missing}. 注入态必须全键携带(trades/capital/positions, cleared_until可选), 宁拒勿默 (P1 2026-10-14)",
+                    "calc": {"missing_keys": _missing}}
+        _lg = ledger
+    else:
+        _lg = {}
     # Rule 1: stop_loss must be a valid number below entry
     try:
         _stop = float(stop_loss)
@@ -1595,12 +2073,13 @@ def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None):
     _mf, _mk_trend, _mk_ex = _market_factor(symbol, full_check=True) if not _ov.get("override_market") else (0.5, "空头排列(人工override)", _mk_ex_proof_override(_ov))
     if _mf is None:
         return {"status": "rejected", "gate": "market_regime",
-                "message": "拒单: 大盘空头排列且未过豁免三证明(板块庇护/个股独立/资金续流). 弱市建仓需交三份证明. 如需人工override: params带override_market=true+override_by+override_reason.",
+                "message": "拒单: 大盘空头排列且未过豁免三证明(板块庇护/个股独立/资金续流). 弱市建仓需交三份证明. 如需人工override: params带override_market/override_budget(视越闸类型)+override_by+override_reason.",
                 "calc": {"trend": _mk_trend, "exemption": _mk_ex.get("proofs", {}) if _mk_ex else {},
                          "authority": "V4.2.1市场系数闸: Faber板块轮动+RS+T+1续流 (调研2026-09-10)"}}
     # Rule 3 (gate-2): consecutive-loss halt - 连亏停手, 冷静期只平不建
     # 只平不建语义由接线自动满足: 闸仅挂 position_add, position_close 不过闸
-    _streak = _consecutive_loss_count()
+    _streak = (_consecutive_loss_count() if ledger is None
+               else _consecutive_loss_count(_lg["trades"], _lg.get("cleared_until", "")))
     _halt_line = int(cfg.get("consecutive_loss_halt", 3))
     if _streak >= _halt_line:
         return {"status": "rejected", "gate": "pre_trade_risk",
@@ -1610,9 +2089,9 @@ def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None):
                          "note": "仅已实现亏损计数, 浮亏不计 (口径: 观澜 2026-09-03裁定)"}}
     # Rule 4 (gate-2): daily circuit breaker - 日熔断, 次日自愈无需解除
     # 分母用当前total_capital (精确版需当日开盘快照, 过度设计; 误差=当日盈亏量级, 已披露)
-    _today_loss = _today_realized_loss()
+    _today_loss = _today_realized_loss(_lg["trades"] if ledger is not None else None)
     if _today_loss < 0:
-        _day_cap = read_account().get("total_capital", 0)
+        _day_cap = _lg["capital"] if ledger is not None else read_account().get("total_capital", 0)
         _day_limit = round(cfg["daily_circuit_breaker_pct"] * _day_cap, 2)
         if abs(_today_loss) >= _day_limit:
             return {"status": "rejected", "gate": "pre_trade_risk",
@@ -1622,8 +2101,7 @@ def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None):
                              "note": "收盘结算口径浮亏不计(偏松版), 补救=日报浮亏提示行(提醒制)"}}
 
     # Rule 2: risk budget
-    acct = read_account()
-    _capital = acct.get("total_capital", 0)
+    _capital = _lg["capital"] if ledger is not None else read_account().get("total_capital", 0)
     if _capital <= 0:
         return {"status": "rejected", "gate": "pre_trade_risk",
                 "message": "拒单: 账户总资本未知或为0, 无法计算风险预算. 先用 account_set 校准.",
@@ -1641,7 +2119,9 @@ def _risk_gate_check(symbol, entry, shares, stop_loss, cfg, override=None):
     # Rule 5 (V4.1 2026-09-08): monthly risk cap - 月度风险总闸 (2/6法则下半句)
     # 语义: 活跃持仓总敞口 + 本新仓风险 <= 6% x 总资本. 浮盈锁利仓(止损>=成本)风险归零不占预算.
     _month_cap = round(cfg.get("monthly_risk_cap_pct", 0.06) * _capital, 2)
-    _active_ps = [p for p in read_positions() if p.get('status') == 'active']
+    # P3统一契约: 注入态positions同样在函数内过滤active——调用方传全量不背锅 (Nova 2026-10-14)
+    _active_ps = ([p for p in _lg["positions"] if p.get('status') == 'active'] if ledger is not None
+                  else [p for p in read_positions() if p.get('status') == 'active'])
     _open_risk = sum(max(0, (p.get('cost', 0) - p.get('stop_loss', 0)) * p.get('shares', 0))
                      for p in _active_ps)
     _total_risk = _open_risk + _risk_amt
@@ -1663,14 +2143,19 @@ def _load_risk_state():
     except Exception:
         return {}
 
-def _consecutive_loss_count(trades=None):
+_LIFT_UNSET = object()  # 哨兵: 区分"读real risk_state"(real默认)与"显式传入值含空串"(paper注入) — Nova P2判例, None语义碰撞不可用
+
+def _consecutive_loss_count(trades=None, cleared_until=_LIFT_UNSET):
     """Trailing consecutive realized losses, chronological by date. Profit close resets to 0.
     口径 (观澜裁定): 仅已实现亏损 - 止损离场计数, 浮亏永不计入.
     Manual lift: only sells strictly AFTER loss_halt_cleared_until count - lift covers the past
-    streak only; new losses after that date re-trigger (解除不是免死金牌)."""
+    streak only; new losses after that date re-trigger (解除不是免死金牌).
+    cleared_until: 哨兵_LIFT_UNSET=读real risk_state.json(real默认路径); 显式传入(含"")=用传入值不读real state
+    (GL-JCL批1 P2隔离: paper连亏不被real的lift日期过滤, Nova 2026-10-14审查)."""
     if trades is None:
         trades = read_trades()
-    _cleared = str(_load_risk_state().get("loss_halt_cleared_until", ""))
+    _cleared = (str(_load_risk_state().get("loss_halt_cleared_until", ""))
+                if cleared_until is _LIFT_UNSET else str(cleared_until or ""))
     sells = sorted(
         (t for t in trades
          if t.get("action") == "sell" and "pnl" in t and str(t.get("date", "")) > _cleared),
@@ -1770,8 +2255,76 @@ def _position_size(symbol, entry=None, cfg=None):
         "authority": "Wilder 1978 ATR 2-3x波段下沿 | 2%预算 Van Tharp | 攒样期ATR版判据 Nova 2026-08-27",
         "note": "verdict: OK可下单 / SKIP_SIGNAL不足半手舍弃不凑单 / DOWNSIZE_CASH按资金降仓 / SKIP_CASH资金不够半手. 建议仓位, 终裁在翔"}}
 
+# === GL-JCL批1转发壳 (瑶序架构裁决 2026-10-14): paper_前缀命令经此转发, 注册区零接触 ===
+# host=globals()传递宿主引用, paper_trading零import main, 循环import根除; importlib因插件目录不在sys.path (settle判例)
+_PAPER = None
+
+def _paper_dispatch(action, params, symbol, cmd):
+    """paper_*命令转发壳. 模块级单例_PAPER只exec一次, 模块级缓存状态保得住."""
+    global _PAPER
+    if _PAPER is None:
+        import importlib.util as _ilu
+        _spec = _ilu.spec_from_file_location("paper_trading", os.path.join(PLUGIN_DIR, "paper_trading.py"))
+        _PAPER = _ilu.module_from_spec(_spec)
+        _spec.loader.exec_module(_PAPER)
+    return _PAPER.handle(action, params, symbol, cmd, host=globals())
+
+
+def _calc_fees(symbol, price, shares, side):
+    """真实A股费率引擎 v3.2.1 —— buy/sell双侧归一 (GL-JCL批1方案A提取, 34a/#36b双源禁令: 费率只允许存在一份)
+    佣金: 股票万2.854, ETF万2.5, 最低5元 | 印花税: 万5仅股票卖出 (#36b 2023-08-28减半政策对齐) | 过户费: 沪市万0.1双边"""
+    import math
+    from decimal import Decimal, InvalidOperation
+    try:
+        if side not in ("buy", "sell"):
+            raise ValueError("invalid fee side")
+        if isinstance(price, bool) or isinstance(shares, bool):
+            raise ValueError("boolean fee input")
+        quantity = Decimal(str(shares))
+        price = float(price)
+        if (not quantity.is_finite() or quantity <= 0
+                or quantity != quantity.to_integral_value()
+                or not math.isfinite(price) or price <= 0):
+            raise ValueError("invalid fee input")
+        shares = int(quantity)
+        _amt = price * shares
+        if not math.isfinite(_amt):
+            raise ValueError("fee amount overflow")
+    except (ValueError, TypeError, OverflowError, InvalidOperation):
+        raise ValueError("invalid fee calculation input") from None
+    fee_config = read_fee_config()
+    _etf = str(symbol).startswith(('5', '159'))
+    rate = fee_config["etf_rate"] if _etf else fee_config["stock_rate"]
+    comm_fee = max(_amt * rate, fee_config["minimum"])
+    stamp_tax = (_amt * 0.0005 if not _etf else 0) if side == "sell" else 0
+    transfer_fee = _amt * 0.00001 if str(symbol).startswith(('6', '5', '9', '11', '13')) else 0
+    return {"comm_fee": round(comm_fee, 2), "stamp_tax": round(stamp_tax, 2),
+            "transfer_fee": round(transfer_fee, 2), "total_fee": round(comm_fee + stamp_tax + transfer_fee, 2)}
+
+@real_ledger_transaction
 @synchronized_data
-def position_add(symbol, name, cost, shares, stop_loss, target, reason="", override_market=None, override_budget=None, override_by=None, override_reason=None):
+def position_add(symbol, name, cost, shares, stop_loss, target, reason="", override_market=None, override_budget=None, override_by=None, override_reason=None, request_id=None):
+    # Validate all booking inputs before risk checks or staging.
+    import math
+    from decimal import Decimal, InvalidOperation
+    try:
+        if any(isinstance(v, bool) for v in (cost, shares, stop_loss, target)):
+            raise ValueError("boolean booking input")
+        quantity = Decimal(str(shares))
+        if (not quantity.is_finite() or quantity <= 0
+                or quantity != quantity.to_integral_value()):
+            raise ValueError("invalid quantity")
+        shares = int(quantity)
+        cost, stop_loss, target = map(float, (cost, stop_loss, target))
+        if any(not math.isfinite(v) or v <= 0
+               for v in (cost, stop_loss, target)):
+            raise ValueError("invalid price")
+        if not isinstance(symbol, str) or not symbol:
+            raise ValueError("symbol required")
+    except (ValueError, TypeError, OverflowError, InvalidOperation):
+        return {"status": "error", "error_code": "invalid_booking_input",
+                "message": "价格、止损和目标须为有限正数，股数须为正整数"}
+    read_fee_config()
     positions = read_positions()
     for p in positions:
         if p["symbol"] == symbol and p.get("status") == "active":
@@ -1814,13 +2367,8 @@ def position_add(symbol, name, cost, shares, stop_loss, target, reason="", overr
     })
     save_positions(positions)
     
-    # === 扣减可用资金 (真实费率 v3.2.1) ===
-    # 佣金：可配置（默认万2.5，最低5元），股票/ETF分别设置
-    comm_rate = float(os.environ.get("BROKER_COMMISSION_ETF", 0.00025)) if symbol.startswith(('5', '159')) else float(os.environ.get("BROKER_COMMISSION_STOCK", 0.00025))
-    comm_fee = max(float(cost) * int(shares) * comm_rate, 5)
-    # 过户费：沪市双边万0.1
-    transfer_fee = float(cost) * int(shares) * 0.00001 if symbol.startswith(('6', '5', '9', '11', '13')) else 0
-    total_fee = round(comm_fee + transfer_fee, 2)
+    # === 扣减可用资金 (真实费率 v3.2.1 → 批1提取: _calc_fees单一事实源) ===
+    total_fee = _calc_fees(symbol, float(cost), int(shares), "buy")["total_fee"]
     # 真实摊薄成本 = (买入金额 + 手续费) / 股数
     actual_cost = round((float(cost) * int(shares) + total_fee) / int(shares), 4)
     positions[-1]["cost"] = actual_cost  # 更新刚追加的持仓成本
@@ -1847,8 +2395,29 @@ def position_add(symbol, name, cost, shares, stop_loss, target, reason="", overr
     return {"status": "added", "message": f"已添加持仓 {name}({symbol}) 成本{cost} 数量{shares} 止损{stop_loss} 目标{target}", "trades_updated": True}
 
 
+@real_ledger_transaction
 @synchronized_data
-def position_close(symbol, sell_price, shares=None, reason="", commission=5):
+def position_close(symbol, sell_price, shares=None, reason="", commission=5, request_id=None):
+    import math
+    from decimal import Decimal, InvalidOperation
+    try:
+        if isinstance(sell_price, bool) or isinstance(commission, bool):
+            raise ValueError("boolean price or commission")
+        sell_price, commission = float(sell_price), float(commission)
+        if (not math.isfinite(sell_price) or sell_price <= 0
+                or not math.isfinite(commission) or commission < 0):
+            raise ValueError("invalid price or commission")
+        if shares is not None:
+            if isinstance(shares, bool):
+                raise ValueError("boolean quantity")
+            quantity = Decimal(str(shares))
+            if (not quantity.is_finite() or quantity <= 0
+                    or quantity != quantity.to_integral_value()):
+                raise ValueError("invalid quantity")
+            shares = int(quantity)
+    except (ValueError, TypeError, OverflowError, InvalidOperation):
+        return {"status": "error", "error_code": "invalid_booking_input",
+                "message": "卖出价须为有限正数，显式股数须为正整数，佣金须为有限非负数"}
     positions = read_positions()
     pos = None
     for p in positions:
@@ -1873,17 +2442,9 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
         return {"status": "error", "message": f"卖出数量无效(shares={shares})"}
     today = datetime.now().strftime("%Y-%m-%d")
     
-    # === 真实A股费率计算引擎 v3.2.1 ===
-    # 1. 佣金：可配置（默认万2.5，最低5元），股票/ETF分别设置
-    comm_rate = float(os.environ.get("BROKER_COMMISSION_ETF", 0.00025)) if symbol.startswith(('5', '159')) else float(os.environ.get("BROKER_COMMISSION_STOCK", 0.00025))
+    # === 真实A股费率计算引擎 v3.2.1 → 批1提取: _calc_fees单一事实源 (#36b税率在函数内) ===
     raw_amount = sell_price * close_shares
-    comm_fee = max(raw_amount * comm_rate, 5)
-    # 2. 印花税：千1(0.1%)，仅股票卖出收取，ETF免收
-    stamp_tax = raw_amount * 0.001 if not symbol.startswith(('5', '159')) else 0
-    # 3. 过户费：万0.1(0.001%)，沪市双边收取，深市免收
-    transfer_fee = raw_amount * 0.00001 if symbol.startswith(('6', '5', '9', '11', '13')) else 0
-    # 卖出净到手金额
-    total_fee = round(comm_fee + stamp_tax + transfer_fee, 2)
+    total_fee = _calc_fees(symbol, sell_price, close_shares, "sell")["total_fee"]
     return_total = raw_amount - total_fee
     # 真实盈亏 = 净到手 - 买入总成本
     cost_basis_total = cost * close_shares
@@ -1917,12 +2478,8 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
     
     # 检查是否为部分减仓
     if close_shares < pos["shares"]:
-        # 部分减仓：保留剩余持仓，更新数量+重算摊薄成本
-        original_total_cost = cost * pos["shares"]
+        # 部分减仓：剩余持仓保持原成本单价，卖出部分按原成本移出 (#36a修正2026-10-08: 原公式扣减return_total导致已实现盈利被藏进剩余仓位低成本, 二次卖出时重复计利; 正确语义: 盈利在卖出时已全额入账trades, 剩余仓位成本不因部分卖出而变)
         remaining_shares = pos["shares"] - close_shares
-        if remaining_shares > 0:
-            diluted_cost = round((original_total_cost - return_total) / remaining_shares, 4)
-            pos["cost"] = diluted_cost
         pos["shares"] = remaining_shares
         save_positions(positions)
         
@@ -1967,9 +2524,19 @@ def position_close(symbol, sell_price, shares=None, reason="", commission=5):
     }
 
 
+@real_ledger_transaction
 @synchronized_data
 def position_update(symbol, stop_loss=None, target=None):
     """更新活跃持仓的风控参数（止损/目标价）"""
+    import math
+    try:
+        for value in (stop_loss, target):
+            if value is not None and (
+                    isinstance(value, bool)
+                    or not math.isfinite(float(value)) or float(value) <= 0):
+                raise ValueError("invalid risk price")
+    except (ValueError, TypeError, OverflowError):
+        return {"status": "error", "message": "止损及目标须为有限正数；未修改持仓"}
     positions = read_positions()
     found = False
     for pos in positions:
@@ -1986,6 +2553,7 @@ def position_update(symbol, stop_loss=None, target=None):
     save_positions(positions)
     return {"status": "success", "message": f"{symbol} 风控参数已更新", "position": pos}
 
+@real_ledger_transaction
 @synchronized_data
 def position_remove(symbol):
     positions = read_positions()
@@ -2001,6 +2569,7 @@ def position_remove(symbol):
     return {"status": "removed", "message": f"已平仓 {symbol}（旧版接口，建议用position_close记录盈亏）"}
 
 
+@real_ledger_transaction
 @synchronized_data
 def position_show():
     positions = read_positions()
@@ -2079,6 +2648,7 @@ def _calc_atr_trailing_stop(symbol, current_stop, price, multiplier=2.5, hwm=Non
         return current_stop
 
 
+@real_ledger_transaction
 @synchronized_data
 def update_trailing_stops():
     """批量更新所有活跃持仓的ATR跟踪止损线"""
@@ -2142,15 +2712,15 @@ def update_trailing_stops():
     }
 
 
+@real_ledger_transaction
 @synchronized_data
 def portfolio_summary():
     """组合概览：持仓+实时价格+盈亏+距止损（含ATR动态止损展示）"""
     positions = read_positions()
     active = [p for p in positions if p.get("status") == "active"]
-    if not active:
-        return {"count": 0, "positions": []}
+    import math
     symbols = [p["symbol"] for p in active]
-    quotes = _sina_batch_quotes(symbols)
+    quotes = _sina_batch_quotes(symbols) if symbols else []
     quote_map = {q.get("代码"): q for q in quotes}
     results = []
     for p in active:
@@ -2159,7 +2729,24 @@ def portfolio_summary():
         stop = p["stop_loss"]
         target = p["target"]
         q = quote_map.get(sym, {})
-        price = float(q.get("最新价", 0) or 0)
+        try:
+            raw_price = q.get("最新价")
+            if isinstance(raw_price, bool) or q.get("error"):
+                raise ValueError("invalid quote")
+            price = float(raw_price)
+            if not math.isfinite(price) or price <= 0:
+                raise ValueError("unavailable price")
+        except (TypeError, ValueError, OverflowError):
+            price = 0
+        try:
+            change = q.get("涨跌幅")
+            if isinstance(change, bool):
+                raise ValueError("invalid change")
+            change = float(change)
+            if not math.isfinite(change):
+                raise ValueError("invalid change")
+        except (TypeError, ValueError, OverflowError):
+            change = None
         # ATR动态止损参考（只读不写）
         atr_stop = _calc_atr_trailing_stop(sym, stop, price) if price > 0 else stop
         if price > 0 and cost > 0:
@@ -2180,16 +2767,29 @@ def portfolio_summary():
             "shares": p["shares"], "pnl_pct": pnl_pct, "stop_loss": stop, "target": target,
             "atr_stop_loss": atr_stop, "dist_stop_pct": dist_stop, "dist_atr_stop_pct": dist_atr_stop,
             "dist_target_pct": dist_target,
-            "warning": warning, "change_pct": float(q.get("涨跌幅", 0) or 0)
+            "warning": warning, "change_pct": change,
+            "quote_available": price > 0,
+            "quote_timestamp": q.get("时间戳"),
+            "quote_source": q.get("source")
         })
-    # 计算总览
-    total_market_value = sum(r.get("price", 0) * r.get("shares", 0) for r in results)
+    # Unknown quotes must not masquerade as a zero-valued position.
+    missing_quotes = [r["symbol"] for r in results if not r["quote_available"]]
+    valuation_complete = not missing_quotes
+    known_market_value = sum(
+        r["price"] * r["shares"] for r in results if r["quote_available"])
+    total_market_value = known_market_value if valuation_complete else None
     acct = read_account()
     available_cash = acct.get("available_cash", 0)
     total_capital = acct.get("total_capital", 0)
-    total_assets = round(total_market_value + available_cash, 2)
-    total_pnl = round(total_assets - total_capital, 2) if total_capital > 0 else None
-    total_pnl_pct = round(total_pnl / total_capital * 100, 2) if total_capital > 0 else None
+    total_assets = (
+        round(total_market_value + available_cash, 2)
+        if valuation_complete else None)
+    total_pnl = (
+        round(total_assets - total_capital, 2)
+        if valuation_complete and total_capital > 0 else None)
+    total_pnl_pct = (
+        round(total_pnl / total_capital * 100, 2)
+        if total_pnl is not None and total_capital > 0 else None)
     
     return {
         "count": len(results),
@@ -2197,7 +2797,11 @@ def portfolio_summary():
         "account": {
             "total_capital": total_capital,
             "available_cash": round(available_cash, 2),
-            "market_value": round(total_market_value, 2),
+            "market_value": (
+                round(total_market_value, 2) if valuation_complete else None),
+            "known_market_value": round(known_market_value, 2),
+            "valuation_complete": valuation_complete,
+            "missing_quotes": missing_quotes,
             "total_assets": total_assets,
             "total_pnl": total_pnl,
             "total_pnl_pct": total_pnl_pct
@@ -2212,9 +2816,10 @@ def get_realtime_quote(symbol):
         result = _sina_realtime(symbol)
         if result:
             return result
-        return {"error": f"未找到 {symbol}"}
-    except Exception as e:
-        return {"error": str(e)[:80]}
+        return {"error": "未获取到有效行情", "error_code": "quote_unavailable"}
+    except Exception:
+        return {"error": "行情请求或解析失败",
+                "error_code": "quote_transport_or_parse_failure"}
 
 
 def get_batch_quotes(symbols):
@@ -2306,8 +2911,16 @@ def get_kline_with_indicators(symbol, days=120):
             wr_s = ta.willr(high, low, close, length=14)
             df['WR'] = wr_s.round(2) if wr_s is not None else pd.Series([-50]*len(df))
 
-            cci_s = ta.cci(high, low, close, length=14)
-            df['CCI'] = cci_s.round(2) if cci_s is not None else pd.Series([0]*len(df))
+            # Avoid the installed pandas-ta fallback's missing-parentheses bug.
+            typical_price = (high + low + close) / 3.0
+            typical_mean = typical_price.rolling(14).mean()
+            mean_deviation = typical_price.rolling(14).apply(
+                lambda values: np.mean(np.abs(values - np.mean(values))),
+                raw=True)
+            df['CCI'] = (
+                (typical_price - typical_mean)
+                / (0.015 * mean_deviation.replace(0, np.nan))
+            ).round(2)
         else:
             # 降级模式：填充 NaN
             df['KDJ_K'] = np.nan; df['KDJ_D'] = np.nan; df['KDJ_J'] = np.nan
@@ -2505,27 +3118,80 @@ def get_capital_flow(symbol):
             return {"error": f"未获取到 {symbol} 资金流向（Tushare+AKShare均无数据，ETF可能不覆盖）"}
         fields = data.get('fields', [])
         recent_flow = []
+        required = ('buy_lg_amount', 'sell_lg_amount',
+                    'buy_elg_amount', 'sell_elg_amount')
+        import math
+        from datetime import date
+        seen_dates = set()
+        amount_fields = (
+            'buy_sm_amount', 'sell_sm_amount',
+            'buy_md_amount', 'sell_md_amount',
+            'buy_lg_amount', 'sell_lg_amount',
+            'buy_elg_amount', 'sell_elg_amount', 'net_mf_amount')
+        if (not isinstance(fields, list)
+                or any(not isinstance(field, str) for field in fields)
+                or len(set(fields)) != len(fields)
+                or not {'ts_code', 'trade_date', *required}.issubset(fields)):
+            return {"error": "资金流响应结构非法", "error_code": "invalid_flow_schema"}
         for item in data['items']:
+            if not isinstance(item, (list, tuple)) or len(item) != len(fields):
+                return {"error": "资金流行结构非法", "error_code": "invalid_flow_schema"}
             row = dict(zip(fields, item))
+            raw_date = row.get('trade_date')
+            if (row.get('ts_code') != ts_code
+                    or not isinstance(raw_date, str)
+                    or len(raw_date) != 8 or not raw_date.isascii()
+                    or not raw_date.isdigit()):
+                return {"error": "资金流标的或日期非法", "error_code": "invalid_flow_identity"}
+            trade_day = datetime.strptime(raw_date, '%Y%m%d').date()
+            if trade_day > date.today() or raw_date in seen_dates:
+                return {"error": "资金流含未来或重复日期", "error_code": "invalid_flow_date"}
+            seen_dates.add(raw_date)
+            for field in amount_fields:
+                value = row.get(field)
+                if value is None:
+                    continue
+                if isinstance(value, bool):
+                    return {"error": "资金流金额非法", "error_code": "invalid_flow_numeric"}
+                number = float(value)
+                if (not math.isfinite(number)
+                        or (field != 'net_mf_amount' and number < 0)):
+                    return {"error": "资金流金额非法", "error_code": "invalid_flow_numeric"}
+                row[field] = number
+            if any(row.get(k) is None for k in required):
+                return {"error": "资金流大单/特大单字段缺失，不能计算策略资金指标",
+                        "_source": "Tushare",
+                        "flow_definition": "large_plus_extra_large_net"}
             trade_date = row.get('trade_date', '')
             formatted_date = f"{trade_date[:4]}-{trade_date[4:6]}-{trade_date[6:]}" if len(trade_date) == 8 else trade_date
             sm_net = round(float(row.get('buy_sm_amount', 0) or 0) - float(row.get('sell_sm_amount', 0) or 0), 2)
             md_net = round(float(row.get('buy_md_amount', 0) or 0) - float(row.get('sell_md_amount', 0) or 0), 2)
             lg_net = round(float(row.get('buy_lg_amount', 0) or 0) - float(row.get('sell_lg_amount', 0) or 0), 2)
             elg_net = round(float(row.get('buy_elg_amount', 0) or 0) - float(row.get('sell_elg_amount', 0) or 0), 2)
-            main_net = round(float(row.get('net_mf_amount', 0) or 0), 2)
+            # Strategy proxy, not identification of institutional investors.
+            # Tushare net_mf_amount is a DISTINCT L2 active-order metric.
+            main_net = round(lg_net + elg_net, 2)
+            active_raw = row.get('net_mf_amount')
+            active_net = (round(float(active_raw), 2)
+                          if active_raw is not None else None)
             entry = {
                 "日期": formatted_date,
                 "主力净流入": main_net,
+                "主动买卖净流入": active_net,
                 "小单净流入": sm_net,
                 "中单净流入": md_net,
                 "大单净流入": lg_net,
                 "超大单净流入": elg_net,
             }
             recent_flow.append(entry)
+        recent_flow.sort(key=lambda r: str(r.get("日期", "")), reverse=True)
         latest = recent_flow[0] if recent_flow else {}
         return {
             "symbol": symbol,
+            "_source": "Tushare",
+            "flow_definition": "large_plus_extra_large_net",
+            "flow_definition_version": 2,
+            "flow_note": "主力为大单加特大单净额的策略代理；主动买卖净流入为上游L2指标，二者不可混用或视为机构身份",
             "latest_flow": latest,
             "recent_flow": recent_flow,
             "summary": {
@@ -2535,12 +3201,92 @@ def get_capital_flow(symbol):
                 "方向": "主力流入" if latest.get("主力净流入", 0) > 0 else "主力流出"
             }
         }
-    except Exception as e:
-        return {"error": f"资金流向获取失败: {str(e)[:60]}"}
+    except Exception:
+        return {"error": "资金流请求或数据校验失败",
+                "error_code": "flow_transport_or_validation_failure"}
+
+
+def _prefetch_sw_histories(industries):
+    """Fetch the same SW2021 histories with at most six concurrent requests."""
+    import math
+    from concurrent.futures import ThreadPoolExecutor
+    if (not isinstance(industries, list) or len(industries) != 31
+            or any(not isinstance(item, (list, tuple)) or len(item) != 2
+                   for item in industries)):
+        raise ValueError("SW2021 industry universe incomplete")
+    codes = [item[0] for item in industries]
+    if (any(not isinstance(code, str) for code in codes)
+            or len(set(codes)) != 31):
+        raise ValueError("invalid industry identities")
+    with ThreadPoolExecutor(max_workers=6) as executor:
+        histories = list(executor.map(
+            lambda code: _sw_hist(code, tail_n=22), codes))
+    date_windows = set()
+    today = datetime.now().strftime("%Y%m%d")
+    for rows in histories:
+        if not isinstance(rows, list) or len(rows) != 22:
+            raise ValueError("industry history coverage incomplete")
+        dates = []
+        for row in rows:
+            if not isinstance(row, dict):
+                raise ValueError("invalid industry row")
+            day, close = row.get("date"), row.get("close")
+            if not isinstance(day, str):
+                raise ValueError("industry date missing")
+            parsed = datetime.strptime(day, "%Y%m%d")
+            if parsed.strftime("%Y%m%d") != day or day > today:
+                raise ValueError("invalid industry date")
+            if (isinstance(close, bool) or not isinstance(close, (int, float))
+                    or not math.isfinite(close) or close <= 0):
+                raise ValueError("invalid industry close")
+            dates.append(day)
+        if dates != sorted(set(dates)):
+            raise ValueError("industry dates duplicate or unsorted")
+        date_windows.add(tuple(dates))
+    if len(date_windows) != 1:
+        raise ValueError("industry observation dates do not align")
+    return histories
 
 
 def get_sector_ranking():
-    """Tushare申万行业涨跌排名（替代已封禁的东方财富push2）"""
+    """Bound ranking IO in a disposable process; never leave a hung thread."""
+    worker = (
+        "import socket; socket.setdefaulttimeout(10); "
+        "import json; import main as gl; "
+        "result = gl._sector_ranking_unbounded(); "
+        "print(json.dumps(result, ensure_ascii=False, allow_nan=False))")
+    try:
+        completed = subprocess.run(
+            [sys.executable, "-B", "-c", worker],
+            cwd=PLUGIN_DIR,
+            env={**os.environ, "PYTHONIOENCODING": "utf-8"},
+            capture_output=True, text=True, encoding="utf-8",
+            timeout=90)
+        if completed.returncode != 0:
+            raise ValueError("sector worker failed")
+        result = json.loads(completed.stdout)
+        if not isinstance(result, dict):
+            raise ValueError("invalid sector worker response")
+        if result.get("error"):
+            return {
+                "error": "行业排名数据源未返回可用结果",
+                "error_code": "sector_source_unavailable",
+                "coverage_complete": False}
+        return result
+    except subprocess.TimeoutExpired:
+        return {
+            "error": "行业排名查询超过90秒，子进程已终止并回收；未返回排名",
+            "error_code": "sector_ranking_timeout",
+            "coverage_complete": False}
+    except Exception:
+        return {
+            "error": "行业排名子进程或返回格式异常；未返回排名",
+            "error_code": "sector_worker_failed",
+            "coverage_complete": False}
+
+
+def _sector_ranking_unbounded():
+    """Industry ranking calculation; called only by the bounded worker."""
     try:
         # Step1: 拿31个申万一级行业
         ind_data = _tushare_api('index_classify',
@@ -2555,10 +3301,10 @@ def get_sector_ranking():
         
         industries = ind_data.get('items', [])
         
-        # Step2: 批量拉涨跌幅 (M9修复2026-09-07: index_daily对申万代码静默0行, 改走申万官网 _sw_hist)
+        # Fetch all histories first; subsequent reads use the process cache.
+        _prefetch_sw_histories(industries)
         results = []
         for code, name in industries:
-            time.sleep(0.15)
             rows = _sw_hist(code, tail_n=2)
             if rows and len(rows) >= 2:
                 prev, last = rows[-2], rows[-1]
@@ -2571,7 +3317,7 @@ def get_sector_ranking():
         results.sort(key=lambda x: x["涨跌幅"], reverse=True)
         top3 = results[:3]
         bot3 = results[-3:]
-        return {"涨幅前3": top3, "跌幅前3": bot3, "数据源": "Tushare(申万一级)"}
+        return {"涨幅前3": top3, "跌幅前3": bot3, "数据源": "申万官网行情（AKShare）；行业名单：Tushare SW2021"}
     except Exception as e:
         return {"error": f"板块排名获取失败: {str(e)[:60]}"}
 
@@ -2617,7 +3363,9 @@ def scan_anomalies_enhanced(symbols_override=None):
     else:
         watchlist = read_watchlist()
 
-    if not watchlist:
+    scan_positions = [
+        p for p in read_positions() if p.get("status") == "active"]
+    if not watchlist and not scan_positions:
         return {
             "scan_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
             "total": 0, "anomaly_count": 0, "normal_count": 0,
@@ -2626,20 +3374,49 @@ def scan_anomalies_enhanced(symbols_override=None):
         }
 
     symbols = [s["code"] for s in watchlist]
+    coverage_symbols = list(dict.fromkeys(
+        symbols + [p["symbol"] for p in scan_positions]))
 
-    # 1. 批量实时行情（新浪源）
+    # 1. 批量实时行情（新浪源, 35c: 失败降级腾讯批量拼mini快照）
+    spot_source = "sina(AKShare全市场)"
+    quote_fetch_started_at = datetime.now().isoformat(timespec="seconds")
     try:
         df_all = _get_spot_data()
-        if df_all is None:
-            return {"error": "全市场行情数据获取失败(新浪源)"}
     except Exception as e:
-        return {"error": f"行情数据获取失败: {str(e)[:80]}"}
+        df_all = None
+        log(f"scan全市场行情异常(新浪源): {e}")
+    # 35c补刀(16:42实弹反馈): 新浪"活着但数据不对"(非None但watchlist全miss)同降级——命中率<50%=隐性故障
+    if (df_all is None or not hasattr(df_all, "columns")
+            or not {"代码", "最新价"}.issubset(df_all.columns) or (
+                coverage_symbols
+                and len(set(df_all['代码']).intersection(coverage_symbols))
+                    < len(coverage_symbols) * 0.5)):
+        pos_syms = [p["symbol"] for p in read_positions() if p.get("status") == "active"]
+        tq = _tencent_batch_quotes(list(dict.fromkeys(
+            coverage_symbols + pos_syms)))
+        if not tq:
+            return {"error": "全市场行情获取失败: 新浪源故障且腾讯备胎无数据(35c双源全灭, 此error即哨兵)"}
+        df_all = pd.DataFrame([{
+            "代码": q["代码"], "名称": q.get("名称"), "最新价": q.get("最新价", 0),
+            "涨跌幅": q.get("涨跌幅", 0), "最高": q.get("最高", 0),
+            "昨收": q.get("昨收", 0), "量比": 0, "换手率": 0, "流通市值": 0,
+            "时间戳": q.get("时间戳"), "source": q.get("source"),
+        } for q in tq])
+        spot_source = "tencent(备胎; 量比/换手/市值检测降级不可用)"
 
+    quote_fetch_completed_at = datetime.now().isoformat(timespec="seconds")
+    source_timestamps = {}
+    for _, observation in df_all.iterrows():
+        raw_stamp = observation.get("时间戳")
+        source_timestamps[str(observation.get("代码"))] = (
+            raw_stamp.strip() if isinstance(raw_stamp, str) and raw_stamp.strip()
+            else None)
     # 2. 沪深300涨跌幅
     hs300_change = get_hs300_change()
 
     anomalies = []
     normal_count = 0
+    missing_watchlist = []  # 35b: watchlist行情缺失收集(不进anomalies防全源故障炸屏, 见_meta.data_quality)
 
     for item in watchlist:
         sym = item["code"]
@@ -2647,19 +3424,35 @@ def scan_anomalies_enhanced(symbols_override=None):
 
         row = df_all[df_all['代码'] == sym]
         if row.empty:
-            normal_count += 1
+            missing_watchlist.append(sym)  # 35b: 缺失可见化
             continue
 
         r = row.iloc[0]
 
-        # 提取实时数据
-        pct = float(r.get('涨跌幅', 0) or 0)
-        price = round(float(r.get('最新价', 0) or 0), 2)
-        vol_ratio = float(r.get('量比', 0) or 0)
-        turnover = float(r.get('换手率', 0) or 0)
-        high = round(float(r.get('最高', 0) or 0), 2)
-        prev_close = round(float(r.get('昨收', 0) or 0), 2)
-        flow_mv = float(r.get('流通市值', 0) or 0)
+        # Invalid prices must not appear as normal/no-anomaly observations.
+        import math
+        try:
+            values = {}
+            for field in ("涨跌幅", "最新价", "量比", "换手率",
+                          "最高", "昨收", "流通市值"):
+                raw_value = r.get(field, 0)
+                if isinstance(raw_value, bool):
+                    raise ValueError("boolean quote value")
+                number = float(raw_value or 0)
+                if (not math.isfinite(number)
+                        or (field != "涨跌幅" and number < 0)):
+                    raise ValueError("invalid quote numeric")
+                values[field] = number
+            if values["最新价"] <= 0:
+                raise ValueError("price unavailable")
+        except (TypeError, ValueError, OverflowError):
+            missing_watchlist.append(sym)
+            continue
+        pct = values["涨跌幅"]
+        price = round(values["最新价"], 2)
+        vol_ratio, turnover = values["量比"], values["换手率"]
+        high, prev_close = round(values["最高"], 2), round(values["昨收"], 2)
+        flow_mv = values["流通市值"]
 
         alert = {
             "code": sym,
@@ -2756,8 +3549,33 @@ def scan_anomalies_enhanced(symbols_override=None):
 
             # 资金流向 → 主力异动
             flow = get_capital_flow(sym)
-            if "recent_flow" in flow and flow["recent_flow"]:
-                main_net = flow["recent_flow"][-1].get("主力净流入万", 0)
+            import math
+            dated_flow = []
+            if isinstance(flow, dict) and not flow.get("error"):
+                for flow_row in flow.get("recent_flow") or []:
+                    try:
+                        if not isinstance(flow_row, dict):
+                            continue
+                        flow_date = datetime.strptime(
+                            str(flow_row.get("日期", "")), "%Y-%m-%d").date()
+                        raw_net = flow_row.get(
+                            "主力净流入万", flow_row.get("主力净流入"))
+                        if isinstance(raw_net, bool):
+                            continue
+                        net = float(raw_net)
+                        if not math.isfinite(net) or flow_date > datetime.now().date():
+                            continue
+                        dated_flow.append((flow_date, net))
+                    except (TypeError, ValueError, OverflowError):
+                        continue
+            dated_flow.sort(key=lambda pair: pair[0], reverse=True)
+            current_flow = (
+                bool(dated_flow)
+                and dated_flow[0][0] == datetime.now().date())
+            if dated_flow:
+                alert["flow_as_of_date"] = dated_flow[0][0].isoformat()
+            if current_flow:
+                main_net = dated_flow[0][1]
                 if abs(main_net) >= 2000:
                     alert["anomaly_types"].append("主力资金异动")
                     alert["severity"] = _max_severity(alert["severity"], "high")
@@ -2770,13 +3588,11 @@ def scan_anomalies_enhanced(symbols_override=None):
                         pct_flow = abs(main_net) * 10000 / flow_mv * 100
                         alert["details"].append(f"主力净流入占流通市值{pct_flow:.1f}%")
             # V4.2 T+1续流验证: 昨日大额流入今日复查, 区分建仓与游资快闪(9/7云铝课)
-            rf = flow.get("recent_flow") or []
-            lf = flow.get("latest_flow") or {}
-            if len(rf) >= 2 and lf:
-                prev_day = rf[1] if (rf and rf[0] is lf) else (rf[-2] if rf[-1] is lf else None)
-                if prev_day:
-                    prev_net = float(prev_day.get("主力净流入万", prev_day.get("主力净流入", 0)) or 0)  # M13b
-                    today_net = float(lf.get("主力净流入万", lf.get("主力净流入", 0)) or 0)
+            if current_flow and len(dated_flow) >= 2:
+                # Distinct dated observations, never Python object identity.
+                if dated_flow[1][0] < dated_flow[0][0]:
+                    prev_net = dated_flow[1][1]
+                    today_net = dated_flow[0][1]
                     if prev_net >= 2000:
                         if today_net < 0 and abs(today_net) >= prev_net * 0.5:
                             alert["anomaly_types"].append("T+1快闪嫌疑")
@@ -2799,10 +3615,34 @@ def scan_anomalies_enhanced(symbols_override=None):
         sym = pos["symbol"]
         row_p = df_all[df_all['代码'] == sym]
         if row_p.empty:
+            # 35a(2026-09-30): 持仓行情缺失不再静默continue——最该响的哨位不响, 9/30川投16.65触发三档全哑事故主病灶
+            anomalies.append({
+                "code": sym, "name": pos.get("name", sym), "price": None,
+                "change_pct": None, "position": True,
+                "anomaly_types": ["数据缺失"],
+                "severity": "high",
+                "details": [f"持仓行情获取失败, 止损{pos.get('stop_loss')}/目标{pos.get('target')}监控失效, 请人工核查(35a)"]
+            })
             continue
         r = row_p.iloc[0]
-        price = round(float(r.get('最新价', 0) or 0), 2)
+        import math
+        try:
+            raw_price = r.get("最新价")
+            if isinstance(raw_price, bool):
+                raise ValueError("boolean price")
+            price = round(float(raw_price), 2)
+            if not math.isfinite(price):
+                raise ValueError("nonfinite price")
+        except (TypeError, ValueError, OverflowError):
+            price = 0
         if price <= 0:
+            anomalies.append({
+                "code": sym, "name": pos.get("name", sym), "price": None,
+                "change_pct": None, "position": True,
+                "anomaly_types": ["数据缺失"],
+                "severity": "high",
+                "details": [f"行情价格无效({price}), 止损/目标监控失效, 请人工核查(35a)"]
+            })
             continue
 
         stop_loss = pos["stop_loss"]
@@ -2846,13 +3686,39 @@ def scan_anomalies_enhanced(symbols_override=None):
         if p_alert["severity"] != "normal":
             anomalies.append(p_alert)
 
+    timestamp_unknown = [
+        sym for sym in coverage_symbols if not source_timestamps.get(sym)]
+    for alert in anomalies:
+        stamp = source_timestamps.get(alert.get("code"))
+        alert["quote_timestamp"] = stamp
+        alert["quote_timestamp_status"] = "source_reported" if stamp else "unknown"
+        alert["quote_fetch_completed_at"] = quote_fetch_completed_at
+        alert["freshness_verified"] = False
+    pos_missing = sum(1 for a in anomalies if a.get("position") and "数据缺失" in a.get("anomaly_types", []))
     return {
         "scan_time": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
         "hs300_change": round(hs300_change, 2),
         "total": len(symbols),
         "anomaly_count": len(anomalies),
         "normal_count": normal_count,
-        "anomalies": anomalies
+        "anomalies": anomalies,
+        # 35b(2026-09-30): 数据新鲜度位——降级/缺失必亮灯, "零异动"与"数据死了"从此可分辨(三宗罪之二根治)
+        "_meta": {
+            "data_quality": {
+                "source": spot_source,
+                "degraded": bool(
+                    missing_watchlist or pos_missing or timestamp_unknown
+                    or spot_source.startswith("tencent")),
+                "quote_fetch_started_at": quote_fetch_started_at,
+                "quote_fetch_completed_at": quote_fetch_completed_at,
+                "source_timestamp_unknown": timestamp_unknown,
+                "freshness_verified": False,
+                "freshness_note": "采集时刻不是行情时刻；源时间未验证，扫描结果不能作为自动成交凭据",
+                "watchlist_missing": missing_watchlist,
+                "positions_missing": pos_missing,
+                "note": "degraded=true时anomalies为空≠真无异动, 数据链有缺口; tencent源量比/换手/市值检测降级"
+            }
+        }
     }
 
 
@@ -3323,6 +4189,58 @@ def market_check():
         return {"error": str(e)[:60]}
 
 
+def _flow_completed_days_confirmed(observed_days):
+    """Confirm the latest two COMPLETED sessions, not two arbitrary old dates.
+
+    Daily moneyflow is not an intraday feed. Before 15:00 China time the
+    latest eligible session is yesterday or earlier. After close, missing
+    today's publication stays unavailable rather than silently using old data.
+    """
+    from datetime import timezone, time as clock_time
+    now = datetime.now(timezone(timedelta(hours=8)))
+    end = now.date()
+    if now.time().replace(tzinfo=None) < clock_time(15, 0):
+        end -= timedelta(days=1)
+    start = end - timedelta(days=40)
+    try:
+        calendar = _tushare_api(
+            "trade_cal",
+            {"exchange": "SSE", "start_date": start.strftime("%Y%m%d"),
+             "end_date": end.strftime("%Y%m%d")},
+            "cal_date,is_open")
+        if not isinstance(calendar, dict):
+            return False
+        fields, items = calendar.get("fields"), calendar.get("items")
+        if (not isinstance(fields, list)
+                or any(not isinstance(f, str) for f in fields)
+                or len(set(fields)) != len(fields)
+                or not {"cal_date", "is_open"}.issubset(fields)
+                or not isinstance(items, list)):
+            return False
+        flags = {}
+        for item in items:
+            if not isinstance(item, (list, tuple)) or len(item) != len(fields):
+                return False
+            row = dict(zip(fields, item))
+            day = datetime.strptime(str(row.get("cal_date")), "%Y%m%d").date()
+            flag = str(row.get("is_open"))
+            if day < start or day > end or day in flags or flag not in ("0", "1"):
+                return False
+            flags[day] = flag == "1"
+        cursor, expected = end, []
+        while cursor >= start and len(expected) < 2:
+            if cursor not in flags:
+                return False
+            if flags[cursor]:
+                expected.append(cursor)
+            cursor -= timedelta(days=1)
+        # Exclude today's partial observations before close.
+        actual = sorted(set(day for day in observed_days if day <= end), reverse=True)
+        return len(expected) == 2 and actual[:2] == expected
+    except Exception:
+        return False
+
+
 def _exemption_check(symbol):
     """V4.2.2 豁免通道三证明 (翔批 2026-09-10建 / M17修订翔批2026-09-22)
     空头市场个股开仓豁免: ①板块庇护(M17: 板块RS排名前1/3且非downtrend——双动量体系,
@@ -3369,17 +4287,44 @@ def _exemption_check(symbol):
     proofs["p2_independence"] = indep_ok
     flow_ok = False
     try:
+        import math
         fl = get_capital_flow(symbol)
+        if not isinstance(fl, dict) or fl.get("error"):
+            raise ValueError("flow unavailable")
         rf = fl.get("recent_flow") or []
-        if len(rf) >= 2:
-            rf_sorted = sorted(rf, key=lambda r: str(r.get("日期", "")))
-            n1 = float(rf_sorted[-2].get("主力净流入万", rf_sorted[-2].get("主力净流入", 0)) or 0)  # M13b键名兼容
-            n0 = float(rf_sorted[-1].get("主力净流入万", rf_sorted[-1].get("主力净流入", 0)) or 0)
+        observations = {}
+        for row in rf:
+            if not isinstance(row, dict):
+                raise ValueError("invalid flow row")
+            flow_day = datetime.strptime(str(row.get("日期", "")), "%Y-%m-%d").date()
+            if flow_day > datetime.now().date() or flow_day in observations:
+                raise ValueError("future or duplicate flow date")
+            raw_net = row.get("主力净流入万", row.get("主力净流入"))
+            if raw_net is None or isinstance(raw_net, bool):
+                raise ValueError("missing flow amount")
+            net = float(raw_net)
+            if not math.isfinite(net):
+                raise ValueError("nonfinite flow amount")
+            observations[flow_day] = net
+        if len(observations) >= 2:
+            if not _flow_completed_days_confirmed(observations):
+                raise ValueError("latest completed-session flow unconfirmed")
+            from datetime import timezone, time as clock_time
+            flow_now = datetime.now(timezone(timedelta(hours=8)))
+            eligible_end = flow_now.date()
+            if flow_now.time().replace(tzinfo=None) < clock_time(15, 0):
+                eligible_end -= timedelta(days=1)
+            days = sorted(day for day in observations if day <= eligible_end)
+            n1, n0 = observations[days[-2]], observations[days[-1]]
+            proofs["flow_prev1_date"] = days[-2].isoformat()
+            proofs["flow_latest_date"] = days[-1].isoformat()
+            proofs["flow_source"] = fl.get("_source")
             proofs["flow_prev1_wan"] = round(n1, 0)
             proofs["flow_latest_wan"] = round(n0, 0)
             flow_ok = (n1 + n0) > 0 and n0 >= 0
-    except Exception as e:
-        proofs["flow_err"] = str(e)[:40]
+    except Exception:
+        proofs["flow_err"] = "资金数据缺失或校验失败"
+        flow_ok = False
     proofs["p3_flow_continuity"] = flow_ok
     exempt = sector_ok and indep_ok and flow_ok
     return {"exempt": exempt, "proofs": proofs,
@@ -3389,7 +4334,8 @@ def _exemption_check(symbol):
 def batch_screen(symbols, with_flow=True, with_exemption=False):
     """#27 batch_screen 批量三问 (2026-09-13 观澜方案+三方会审, 翔批)
     决策层批量补格: funnel(批量过滤)→本命令(批量三问)→position_size(单票定仓)链路贯通.
-    单一事实源: 循环调用 stock_screen_v3 / get_capital_flow / _exemption_check 本体函数, 零逻辑分叉.
+    单一事实源: 循环调用 stock_screen / get_capital_flow / _exemption_check 本体函数, 零逻辑分叉.
+    [34a修复 2026-09-29] 原为stock_screen_v3——9/13立项误绑旧内核致双内核分裂(#34a), v4.5.1换绑v4.1五风格内核.
     P1 pacing 0.35s/票 | P2 单票失败进error整体继续 | P3 MAX_BATCH=30硬编码(防误传300) |
     P4 symbols双形态: list(JSON路径)或逗号串(k=v路径) | P5 data_quality哨兵(失败是响的批量版)
     输出层(观澜18:25签字): summary摘要表 + PASS明细全字段; REJECT只入摘要一行原因.
@@ -3402,7 +4348,10 @@ def batch_screen(symbols, with_flow=True, with_exemption=False):
         syms = [s.strip() for s in symbols.split(",") if s.strip()]  # P4: k=v逗号串路径
     else:
         syms = [str(s).strip() for s in (symbols or []) if str(s).strip()]  # P4: JSON数组路径
-    syms = [s for s in syms if s.isdigit() and len(s) == 6][:MAX_BATCH]
+    syms = [s for s in syms if s.isdigit() and len(s) == 6]
+    if len(syms) > MAX_BATCH:
+        return {"status": "error", "message": "每批最多30只，请拆批；未执行任何筛选",
+                "requested_count": len(syms), "max_batch": MAX_BATCH}
     if not syms:
         return {"status": "error", "message": "symbols为空或格式无效(需六位代码, 逗号分隔或数组)"}
     summary, details_pass, errors = [], [], []
@@ -3410,7 +4359,7 @@ def batch_screen(symbols, with_flow=True, with_exemption=False):
     for i, sym in enumerate(syms):
         row = {"symbol": sym}
         try:
-            r = stock_screen_v3(sym)
+            r = stock_screen(sym)  # 34a(2026-09-29): 换绑v4.1五风格内核, 原9/13误绑stock_screen_v3
             if i < len(syms) - 1:
                 _time.sleep(0.35)  # P1 pacing
             if not isinstance(r, dict):
@@ -3418,27 +4367,55 @@ def batch_screen(symbols, with_flow=True, with_exemption=False):
             _d = r.get("details", {})  # 键名适配(实弹验证修正): 本体返回PE_TTM/PB/RSI6, 非pe/pb/rsi6
             row["verdict"] = "PASS" if r.get("pass") else "REJECT"
             row["rejected_by"] = r.get("rejected_by", [])
-            row["reason"] = r.get("reason", "")[:60]  # REJECT一行原因入表(输出层签字项)
+            row["reason"] = (r.get("reason") or ";".join(r.get("rejected_by", [])[:3]) or "")[:60]  # 34a刀2: reason终审恒有, 此为早退兜底(输出层签字项)
             row["pe"] = _d.get("PE_TTM", _d.get("pe"))
             row["pb"] = _d.get("PB", _d.get("pb"))
             row["rsi6"] = _d.get("RSI6", _d.get("rsi6"))
             row["close"] = _d.get("close")
+            row["style_group"] = _d.get("style_group")  # 34a刀2: v4.1判决解释变量, REJECT理由如"ROE<10%(B组)"需组别列
             if with_flow:
                 try:
+                    import math
+                    from datetime import date
                     fl = get_capital_flow(sym)
-                    rf = fl.get("recent_flow") or []
-                    if len(rf) >= 2:
-                        rf_s = sorted(rf, key=lambda x: str(x.get("日期", "")))
-                        n1 = float(rf_s[-2].get("主力净流入万", rf_s[-2].get("主力净流入", 0)) or 0)  # M13b
-                        n0 = float(rf_s[-1].get("主力净流入万", rf_s[-1].get("主力净流入", 0)) or 0)
-                        row["flow_2d_sum"] = round(n1 + n0, 0)
-                        if (n1 + n0) != 0:
-                            flow_alive += 1
+                    if not isinstance(fl, dict) or fl.get("error"):
+                        raise ValueError("flow unavailable")
+                    observations = {}
+                    for observation in fl.get("recent_flow") or []:
+                        if not isinstance(observation, dict):
+                            raise ValueError("invalid flow row")
+                        day = date.fromisoformat(str(observation.get("日期", "")))
+                        if day > date.today() or day in observations:
+                            raise ValueError("future or duplicate flow date")
+                        raw_net = observation.get(
+                            "主力净流入万", observation.get("主力净流入"))
+                        if raw_net is None or isinstance(raw_net, bool):
+                            raise ValueError("missing flow amount")
+                        net = float(raw_net)
+                        if not math.isfinite(net):
+                            raise ValueError("nonfinite flow amount")
+                        observations[day] = net
+                    if len(observations) >= 2:
+                        if not _flow_completed_days_confirmed(observations):
+                            raise ValueError("latest completed-session flow unconfirmed")
+                        from datetime import timezone, time as clock_time
+                        flow_now = datetime.now(timezone(timedelta(hours=8)))
+                        eligible_end = flow_now.date()
+                        if flow_now.time().replace(tzinfo=None) < clock_time(15, 0):
+                            eligible_end -= timedelta(days=1)
+                        days = sorted(day for day in observations if day <= eligible_end)
+                        total = observations[days[-2]] + observations[days[-1]]
+                        if not math.isfinite(total):
+                            raise ValueError("flow sum overflow")
+                        row["flow_2d_sum"] = round(total, 0)
+                        row["flow_dates"] = [d.isoformat() for d in days[-2:]]
+                        row["flow_source"] = fl.get("_source")
+                        flow_alive += 1  # Valid zero is data, not an outage.
                     else:
                         row["flow_2d_sum"] = None
-                except Exception as e:
+                except Exception:
                     row["flow_2d_sum"] = None
-                    row["flow_err"] = str(e)[:40]
+                    row["flow_err"] = "资金数据缺失或校验失败"
             if with_exemption and r.get("pass"):
                 try:
                     ex = _exemption_check(sym)
@@ -3455,12 +4432,14 @@ def batch_screen(symbols, with_flow=True, with_exemption=False):
     out = {"status": "success",
            "meta": {"count": len(syms), "passed": passed, "rejected": len(syms) - passed - len(errors),
                      "errors": len(errors), "with_flow": with_flow, "with_exemption": with_exemption,
-                     "authority": "#27三方会审2026-09-13(瑶序五笔+Nova三增量+翔两裁决), A方案同步30只"},
+                     "framework_version": "4.1",
+                     "framework_hash": _generate_fv_hash(),  # 34a刀3: 参数级md5指纹随校准演化, 判决可溯源(#34a主诉)
+                     "authority": "#27三方会审2026-09-13(瑶序五笔+Nova三增量+翔两裁决), A方案同步30只; 34a换绑v4.1内核(2026-09-29)"},
            "summary": summary, "details_pass": details_pass, "errors": errors}
     # P5: data_quality哨兵 — flow全灭或错误过半时响
     dq = []
     if with_flow and summary and flow_alive == 0:
-        dq.append("⚠ data_quality: flow全灭(所有票flow_2d_sum为0或None)——上游数据源可能故障, 本轮flow列不可信, 勿据此筛选(野战案②防御)")
+        dq.append("⚠ data_quality: 全部标的缺少有效双日资金数据；本轮资金列不可用于筛选。合法零净额不属于数据故障。")
     if errors and len(errors) >= len(syms) / 2:
         dq.append(f"⚠ data_quality: 单票错误率{len(errors)}/{len(syms)}过半——大面积失败, 结果不完整")
     if dq:
@@ -3489,7 +4468,10 @@ def _market_factor(symbol=None, full_check=False):
 
 
 def stock_screen_v3(symbol):
-    """选股框架三问 + 禁买清单"""
+    """[DEPRECATED 2026-09-29] 旧三问内核(市值100亿/RSI65/布林+旧Q1-Q3). 死亡原因: 9/13 batch_screen立项误绑此函数,
+    与dispatcher侧stock_screen(v4.1五风格)形成双内核分裂(#34a), 2026-09-29换绑后本函数零调用方.
+    保留仅作历史参照(watchpool_DEPRECATED先例), 禁止新调用——新需求一律走stock_screen().
+    原注释: 选股框架三问 + 禁买清单"""
     result = {
         "symbol": symbol,
         "pass": True,
@@ -3713,6 +4695,7 @@ def stock_screen(symbol):
     result["details"]["PB"] = round(pb, 2)
     result["details"]["total_mv_yi"] = round(total_mv / 10000, 1) if total_mv else None
     result["details"]["dv_ttm"] = round(dv_ttm, 2)
+    result["details"]["close"] = close  # 34a刀2: batch摘要列依赖, details自足(v4.0重写时自v3丢失, 复原)
 
     # --- Step 1: industry -> style group ---
     industry = _get_industry(symbol)
@@ -3999,11 +4982,9 @@ def main():
             return
 
         cmd = json.loads(raw)
-        try:
-            with open("probe_raw.json", "w", encoding="utf-8") as _f:
-                _f.write(raw[:2000])
-        except Exception:
-            pass
+        if not isinstance(cmd, dict):
+            raise ValueError("command must be an object")
+        # Raw requests may contain personal data or credentials. Do not persist.
         action = cmd.get("action", "") or cmd.get("command", "")
         symbol = cmd.get("symbol", "")
         symbols = cmd.get("symbols", [])
@@ -4013,6 +4994,7 @@ def main():
 
         params = cmd.get("params", {})
         if isinstance(params, str):
+            params_text = params
             try:
                 params = json.loads(params)
                 if not isinstance(params, dict):
@@ -4027,7 +5009,7 @@ def main():
                 on_key = True
                 saw_eq = False
                 bad_seg = False
-                for ch in params:
+                for ch in params_text:
                     if ch == chr(34):
                         in_quote = not in_quote
                         continue
@@ -4054,7 +5036,7 @@ def main():
                         parsed[cur_key.strip()] = cur_val.strip()
                     else:
                         bad_seg = True
-                if parsed and not bad_seg:
+                if parsed and not bad_seg and not in_quote:
                     def _auto_type(s):
                         try:
                             return int(s)
@@ -4063,13 +5045,19 @@ def main():
                                 return float(s)
                             except ValueError:
                                 return s
-                    params = {k: _auto_type(v) for k, v in parsed.items()}
+                    params = {
+                        k: (v if k == "request_id" else _auto_type(v))
+                        for k, v in parsed.items()}
                 else:
-                    out = {"status": "success", "result": {"error": "params格式无法解析(既非JSON亦非k=v): " + str(params)[:80]}}
+                    out = {"status": "error", "message": "params格式无效，须为JSON对象或合法k=v参数串"}
                     print(json.dumps(out, ensure_ascii=False))
                     return
 
-        log(f"action={action} symbol={symbol}")
+        if not isinstance(params, dict):
+            raise ValueError("params must be an object")
+        if not isinstance(action, str) or not isinstance(symbol, str):
+            raise ValueError("action and symbol must be strings")
+        log("command received")
 
         if action == "realtime_quote":
             out = {"status": "success", "result": get_realtime_quote(symbol)}
@@ -4149,34 +5137,45 @@ def main():
             else:
                 out = {"status": "success", "result": watchlist_remove(symbol)}
 
+        elif action == "pool_show":
+            # 34c终池名单查询(卫星转发壳, 2026-10-19激活): funnel_daily只报diff统计, 全名单曾需FileOperator绕路——
+            # 盘中任务禁FileOperator背景下ctrl_b采样断链, 挂壳修复. 本体pool_show.py(9/28), 零API零写纯读.
+            p_date = params.get("date") or cmd.get("date", "")
+            try:
+                _r = subprocess.run([sys.executable, os.path.join(PLUGIN_DIR, "pool_show.py")] + ([str(p_date)] if p_date else []),
+                                    capture_output=True, text=True, encoding="utf-8", timeout=30)
+                out = ({"status": "success", "result": json.loads(_r.stdout)}
+                       if _r.returncode == 0 else {"status": "error", "message": _r.stderr.strip()[-200:] or "pool_show failed"})
+            except Exception as _e:
+                out = {"status": "error", "message": "pool_show exec error: %s" % _e}
         elif action == "watchlist_show":
             out = {"status": "success", "result": watchlist_show()}
 
         elif action == "position_add":
             p_name = params.get("name") or cmd.get("name", "")
-            p_cost = params.get("cost") or cmd.get("cost", 0)
-            p_shares = params.get("shares") or cmd.get("shares", 0)
-            p_stop = params.get("stop_loss") or cmd.get("stop_loss", 0)
-            p_target = params.get("target") or cmd.get("target", 0)
+            p_cost = params.get("cost", cmd.get("cost", 0))
+            p_shares = params.get("shares", cmd.get("shares", 0))
+            p_stop = params.get("stop_loss", cmd.get("stop_loss", 0))
+            p_target = params.get("target", cmd.get("target", 0))
             p_reason = params.get("reason") or cmd.get("reason", "")
             if not symbol or not p_cost or not p_shares:
                 out = {"status": "error", "message": "缺少必要参数: symbol/cost/shares"}
             else:
-                out = {"status": "success", "result": position_add(symbol, p_name, p_cost, p_shares, p_stop, p_target, p_reason, params.get("override_market"), params.get("override_budget"), params.get("override_by"), params.get("override_reason"))}
+                out = {"status": "success", "result": position_add(symbol, p_name, p_cost, p_shares, p_stop, p_target, p_reason, params.get("override_market"), params.get("override_budget"), params.get("override_by"), params.get("override_reason"), request_id=_booking_request_id(params, cmd))}
 
         elif action == "position_close":
-            p_price = params.get("sell_price") or cmd.get("sell_price", 0)
-            p_shares = params.get("shares") or cmd.get("shares")
+            p_price = params.get("sell_price", cmd.get("sell_price", 0))
+            p_shares = params.get("shares", cmd.get("shares"))
             p_reason = params.get("reason") or cmd.get("reason", "")
-            p_commission = params.get("commission") or cmd.get("commission", 5)
+            p_commission = params.get("commission", cmd.get("commission", 5))
             if not symbol or not p_price:
                 out = {"status": "error", "message": "缺少必要参数: symbol/sell_price"}
             else:
-                out = {"status": "success", "result": position_close(symbol, p_price, p_shares, p_reason, p_commission)}
+                out = {"status": "success", "result": position_close(symbol, p_price, p_shares, p_reason, p_commission, request_id=_booking_request_id(params, cmd))}
 
         elif action == "position_update":
-            p_stop = params.get("stop_loss") or cmd.get("stop_loss")
-            p_target = params.get("target") or cmd.get("target")
+            p_stop = params.get("stop_loss", cmd.get("stop_loss"))
+            p_target = params.get("target", cmd.get("target"))
             if not symbol:
                 out = {"status": "error", "message": "缺少symbol参数"}
             else:
@@ -4241,7 +5240,16 @@ def main():
             out = {"status": "success", "result": sentiment_scan(symbol if symbol else None, symbols if symbols else None)}
 
         elif action == "sentiment_rank":
-            out = {"status": "success", "result": {"count": 0, "records": _ak_sentiment_market_rank()}}
+            try:
+                rank_records = _ak_sentiment_market_rank()
+                out = {"status": "success", "result": {
+                    "count": len(rank_records), "records": rank_records}}
+            except Exception:
+                out = {"status": "success", "result": {
+                    "status": "error",
+                    "error": "全市场人气排名数据不可用，不能确认榜单",
+                    "error_code": "sentiment_rank_unavailable",
+                    "coverage_complete": False}}
 
         elif action == "stress_test":
             p_scenario = params.get("scenario", "crash_2015")
@@ -4289,14 +5297,20 @@ def main():
                 _raw = (_p.stdout or "").strip()
                 try:
                     _rpt = json.loads(_raw)
-                except Exception:
-                    _rpt = {"status": "error", "message": f"harvest output not JSON: {_raw[:200]}"}
+                    if not isinstance(_rpt, dict):
+                        raise ValueError("harvest report must be an object")
+                except (ValueError, TypeError):
+                    _rpt = {"status": "error", "error_code": "invalid_harvest_report",
+                            "message": "收割子进程未返回有效对象报告；请核对账本及水位线"}
                 _rpt["exit_code"] = _p.returncode
-                if _p.stderr:
-                    _rpt["stderr_tail"] = _p.stderr[-300:]
-                out = {"status": "success", "result": _rpt}
-            except Exception as _e:
-                out = {"status": "error", "message": f"harvest_judgments failed: {str(_e)[:120]}"}
+                _rpt["stderr_present"] = bool(_p.stderr)
+                _failed = (
+                    _p.returncode != 0 or bool(_rpt.get("error"))
+                    or _rpt.get("status") in ("error", "fail", "failed", "blocked"))
+                out = {"status": "error" if _failed else "success", "result": _rpt}
+            except Exception:
+                out = {"status": "error", "error_code": "harvest_execution_failed",
+                       "message": "收割执行失败或超时；可能已有部分产物，请核对状态后再重试"}
 
         elif action == "exemption_check":
             # #27-③ (2026-09-13 观澜): _exemption_check本为模块级函数(L3278), 本分支仅暴露为可独立调用
@@ -4328,11 +5342,18 @@ def main():
                 _symlist = [s.strip() for s in _syms.split(",") if s.strip()]
             else:
                 _symlist = [str(s).strip() for s in (_syms or []) if str(s).strip()]
-            _symlist = [s for s in _symlist if s.isdigit() and len(s) == 6][:30]
+            _symlist = [s for s in _symlist if s.isdigit() and len(s) == 6]
+            if len(_symlist) > 30:
+                out = {"status": "error",
+                       "message": "每批最多30只，请拆批；未启动后台筛选",
+                       "requested_count": len(_symlist), "max_batch": 30}
+                print(json.dumps(out, ensure_ascii=False))
+                return
             if not _symlist:
                 out = {"status": "error", "message": "symbols为空或格式无效(需六位代码, 逗号分隔或数组)"}
             else:
-                _key15 = _h15.md5(("|".join(_symlist) + "|" + str(bool(_wf)) + "|" + str(bool(_we))).encode("utf-8")).hexdigest()[:10]
+                # Version the result contract: never reuse pre-flow-v2 results.
+                _key15 = _h15.md5(("flow-v2-batch-v2|" + "|".join(_symlist) + "|" + str(bool(_wf)) + "|" + str(bool(_we))).encode("utf-8")).hexdigest()[:10]
                 _rpath = os.path.join(PLUGIN_DIR, "market_data", "batch_result_" + _key15 + ".json")
                 _res15 = None
                 if os.path.exists(_rpath):
@@ -4349,7 +5370,8 @@ def main():
                     if os.path.exists(_lf15) and (time.time() - os.path.getmtime(_lf15)) < 150:
                         for _w15 in range(34):
                             time.sleep(5)
-                            if os.path.exists(_rpath):
+                            if (os.path.exists(_rpath)
+                                    and time.time() - os.path.getmtime(_rpath) < 600):
                                 try:
                                     with open(_rpath, "r", encoding="utf-8") as _f15:
                                         _res15 = json.load(_f15)
@@ -4387,15 +5409,21 @@ def main():
                     timeout=110, cwd=PLUGIN_DIR, env=_env)
                 _raw = (_p.stdout or "").strip()
                 try:
-                    _rpt = json.loads(_raw)  # settle输出为单一JSON报告(indent多行, 整体解析)
-                except Exception:
-                    _rpt = {"status": "error", "message": f"settle output not JSON: {_raw[:200]}"}
+                    _rpt = json.loads(_raw)
+                    if not isinstance(_rpt, dict):
+                        raise ValueError("settlement report must be an object")
+                except (ValueError, TypeError):
+                    _rpt = {"status": "error", "error_code": "invalid_settlement_report",
+                            "message": "结算子进程未返回有效对象报告；请先核对结果账本"}
                 _rpt["exit_code"] = _p.returncode
-                if _p.stderr:
-                    _rpt["stderr_tail"] = _p.stderr[-300:]
-                out = {"status": "success", "result": _rpt}
-            except Exception as _e:
-                out = {"status": "error", "message": f"settle_results failed: {str(_e)[:120]}"}
+                _rpt["stderr_present"] = bool(_p.stderr)
+                _failed = (
+                    _p.returncode != 0 or bool(_rpt.get("error"))
+                    or _rpt.get("status") in ("error", "fail", "failed", "blocked"))
+                out = {"status": "error" if _failed else "success", "result": _rpt}
+            except Exception:
+                out = {"status": "error", "error_code": "settlement_execution_failed",
+                       "message": "结算执行失败或超时；先核对结果账本，勿据失败回执断言未写入"}
 
         elif action == "funnel_daily":
             # V4.3.1 异步化 2026-09-09 翔批: 死锁三角(本体~180s > timeout 110s > 通信墙60s)根治
@@ -4406,10 +5434,12 @@ def main():
             try:
                 _env = {**os.environ, "PYTHONIOENCODING": "utf-8"}
                 _date = None
-                if params.get("date"):
+                if "date" in params:
                     _d = str(params["date"]).strip()
-                    if len(_d) == 8 and _d.isdigit():
-                        _date = _d
+                    if (len(_d) != 8 or not _d.isascii() or not _d.isdigit()
+                            or _dt.datetime.strptime(_d, "%Y%m%d").strftime("%Y%m%d") != _d):
+                        raise ValueError("invalid requested funnel date")
+                    _date = _d
                 _cmd_field = str(cmd.get("command", "") or "")
                 if not _date and _cmd_field.strip() and _cmd_field != "funnel_daily":
                     _d = _cmd_field.strip()
@@ -4422,7 +5452,38 @@ def main():
                 _run_flag = os.path.join(PLUGIN_DIR, "market_data", f".funnel_running_{_date}")
 
                 if os.path.exists(_prod):
-                    # 路径A: 缓存命中 - 优先读同日log完整报告, fallback产物计数
+                    # Validate the source of truth BEFORE considering a log summary.
+                    with open(_prod, "r", encoding="utf-8") as _f:
+                        _cached_pool = json.load(_f)
+                    if not isinstance(_cached_pool, dict):
+                        raise ValueError("invalid cached pool")
+                    _cached_meta = _cached_pool.get("_meta")
+                    _cached_items = _cached_pool.get("items")
+                    if (not isinstance(_cached_meta, dict)
+                            or _cached_meta.get("trade_date") != _date
+                            or not isinstance(_cached_items, list)):
+                        raise ValueError("cached pool date or structure invalid")
+                    _cached_codes = set()
+                    for _item in _cached_items:
+                        if (not isinstance(_item, dict)
+                                or not isinstance(_item.get("code"), str)
+                                or not _item["code"]
+                                or _item["code"] in _cached_codes):
+                            raise ValueError("invalid cached pool item")
+                        _cached_codes.add(_item["code"])
+                    if _cached_meta.get("financial_policy") != "cashflow-v2":
+                        print(json.dumps({
+                            "status": "error",
+                            "error_code": "obsolete_financial_pool",
+                            "result": {
+                                "status": "blocked", "source": "cache",
+                                "trade_date": _date,
+                                "usable_for_selection": False,
+                                "requires_rebuild": True,
+                                "message": "终池使用旧财务公式或版本不明；原文件保留，仅供查档，须按cashflow-v2重新生成"}
+                        }, ensure_ascii=False))
+                        return
+                    # A log is supplementary, never evidence that a pool is valid.
                     _summary = None
                     for _flog in (os.path.join(PLUGIN_DIR, f"funnel_{_date}.log"),
                                   os.path.join(PLUGIN_DIR, f"funnel_{_date[4:]}.log")):
@@ -4435,21 +5496,32 @@ def main():
                                     break
                             except Exception:
                                 _summary = None
-                    if isinstance(_summary, dict):
+                    if (isinstance(_summary, dict)
+                            and _summary.get("status") == "ok"
+                            and _summary.get("trade_date") == _date
+                            and type(_summary.get("final")) is int
+                            and _summary["final"] == len(_cached_items)):
                         _summary["source"] = "cache"
+                        _summary["point_in_time_verified"] = _cached_meta.get(
+                            "point_in_time_verified", False)
+                        _summary["historical_use_warning"] = _cached_meta.get(
+                            "historical_use_warning",
+                            "历史时点可得性未验证，不得作为无前视偏差回测证据")
                         out = {"status": "success", "result": _summary}
                     else:
                         try:
-                            with open(_prod, "r", encoding="utf-8") as _f:
-                                _pool = json.load(_f)
-                            _meta = _pool.get("_meta", {}) if isinstance(_pool, dict) else {}
-                            _items = _pool.get("items", []) if isinstance(_pool, dict) else (_pool if isinstance(_pool, list) else [])
+                            _meta = _cached_meta
+                            _items = _cached_items
                             out = {"status": "success", "result": {"status": "ok", "source": "cache",
                                    "trade_date": _meta.get("trade_date", _date),
                                    "l1": _meta.get("l1"), "l2": _meta.get("l2"), "fina_pool": _meta.get("fina_pool"),
                                    "final_count": len(_items),
                                    "pool_name": "候选池",  # 命名约定(翔2026-09-14): 三层池=候选池->观察池(watchlist)->持仓
-                                   "fina_source": _meta.get("fina_source"), "prev_pool_date": _meta.get("prev_pool_date")}}
+                                   "fina_source": _meta.get("fina_source"), "prev_pool_date": _meta.get("prev_pool_date"),
+                                   "point_in_time_verified": _meta.get("point_in_time_verified", False),
+                                   "historical_use_warning": _meta.get(
+                                       "historical_use_warning",
+                                       "历史时点可得性未验证，不得作为无前视偏差回测证据")}}
                         except Exception as _e:
                             out = {"status": "success", "result": {"status": "error", "trade_date": _date, "message": f"产物损坏: {str(_e)[:80]}"}}
                 else:
@@ -4503,15 +5575,24 @@ def main():
             except Exception as _e:
                 out = {"status": "error", "message": f"funnel_daily failed: {str(_e)[:120]}"}
 
+        elif action.startswith("paper_"):
+            # GL-JCL批1: paper_前缀命令转paper_trading.handle (转发壳, 45注册分支零接触, 29a diff可验)
+            # b329: 统一传输层包装——handle业务状态(added/closed/rejected/deferred/error)进result, 与position_add包装同款;
+            # 裸字典无顶层status会被VCP插件协议判invalid (15:40 paper_portfolio首测实锤)
+            out = {"status": "success", "result": _paper_dispatch(action, params, symbol, cmd)}
+
         else:
             out = {"status": "error", "message": f"未知操作: {action}"}
 
-        print(json.dumps(out, ensure_ascii=False, default=str))
+        print(json.dumps(out, ensure_ascii=False, default=str, allow_nan=False))
 
-    except json.JSONDecodeError as e:
-        print(json.dumps({"status": "error", "message": f"JSON错误: {e}"}, ensure_ascii=False))
-    except Exception as e:
-        print(json.dumps({"status": "error", "message": f"异常: {str(e)[:150]}"}, ensure_ascii=False))
+    except json.JSONDecodeError:
+        print(json.dumps({"status": "error", "error_code": "invalid_json",
+                          "message": "输入JSON解析失败"}, ensure_ascii=False))
+    except Exception:
+        print(json.dumps({"status": "error", "error_code": "operation_failed",
+                          "message": "参数校验或操作失败；涉及记账时请先核对状态，勿更换请求ID盲目重试"},
+                         ensure_ascii=False))
 
 
 if __name__ == "__main__":

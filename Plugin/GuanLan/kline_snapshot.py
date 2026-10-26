@@ -50,7 +50,8 @@ def load_state():
 
 def save_state(state):
     DATA_DIR.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding='utf-8')
+    from ledger_io import atomic_write_json
+    atomic_write_json(STATE_FILE, state)
 
 def pull_one(api, api_name, params, fields):
     """None 重试1次; 再 None 返回 None."""
@@ -63,37 +64,84 @@ def pull_one(api, api_name, params, fields):
     return None
 
 def snapshot_kline(trade_date, api):
-    """双文件齐备 -> skip (幂等); 拉取失败保旧不推进."""
+    """Validate both streams before saving; each file replacement is atomic."""
+    import math
+    from ledger_io import atomic_write_json
+
+    def validate(document, kind, cached=False):
+        if not isinstance(document, dict):
+            raise ValueError("snapshot must be an object")
+        fields, items = document.get("fields"), document.get("items")
+        required = ("ts_code", "close", "vol") if kind == "daily" else (
+            "ts_code", "adj_factor")
+        if (not isinstance(fields, list)
+                or any(not isinstance(f, str) for f in fields)
+                or len(set(fields)) != len(fields)
+                or not set(required).issubset(fields)
+                or not isinstance(items, list) or not items):
+            raise ValueError("invalid or empty snapshot schema")
+        if cached and document.get("_meta", {}).get("trade_date") != trade_date:
+            raise ValueError("cached date mismatch")
+        codes = set()
+        for values in items:
+            if not isinstance(values, list) or len(values) != len(fields):
+                raise ValueError("invalid snapshot row")
+            row = dict(zip(fields, values))
+            code = row["ts_code"]
+            if not isinstance(code, str) or not code or code in codes:
+                raise ValueError("invalid or duplicate symbol")
+            codes.add(code)
+            numeric = ("close", "vol") if kind == "daily" else ("adj_factor",)
+            for key in numeric:
+                value = row[key]
+                if (isinstance(value, bool) or not isinstance(value, (int, float))
+                        or not math.isfinite(value)
+                        or (value < 0 if key == "vol" else value <= 0)):
+                    raise ValueError("invalid snapshot numeric value")
+        return codes
+
     f_daily = DATA_DIR / f"kline_daily_{trade_date}.json"
     f_adj = DATA_DIR / f"kline_adj_{trade_date}.json"
-    if f_daily.exists() and f_adj.exists():
-        return {"status": "skip", "trade_date": trade_date}
-    DATA_DIR.mkdir(exist_ok=True)
-    rd = pull_one(api, 'daily', {'trade_date': trade_date}, FIELDS_DAILY)
-    time.sleep(PACING)
-    ra = pull_one(api, 'adj_factor', {'trade_date': trade_date}, FIELDS_ADJ)
-    time.sleep(PACING)
-    if rd is None or ra is None:
+    try:
+        if f_daily.exists() and f_adj.exists():
+            rd = json.loads(f_daily.read_text(encoding="utf-8"))
+            ra = json.loads(f_adj.read_text(encoding="utf-8"))
+            daily_codes = validate(rd, "daily", cached=True)
+            adj_codes = validate(ra, "adj", cached=True)
+            if not daily_codes.issubset(adj_codes):
+                raise ValueError("cached adjustment coverage incomplete")
+            return {"status": "skip", "trade_date": trade_date}
+        if f_daily.exists() or f_adj.exists():
+            raise ValueError("incomplete cached pair; manual verification required")
+        rd = pull_one(api, "daily", {"trade_date": trade_date}, FIELDS_DAILY)
+        time.sleep(PACING)
+        ra = pull_one(api, "adj_factor", {"trade_date": trade_date}, FIELDS_ADJ)
+        time.sleep(PACING)
+        daily_codes = validate(rd, "daily")
+        adj_codes = validate(ra, "adj")
+        if not daily_codes.issubset(adj_codes):
+            raise ValueError("adjustment coverage incomplete")
+        payloads = []
+        for kind, document in (("daily", rd), ("adj", ra)):
+            payloads.append({
+                "_meta": {
+                    "fetched_at": datetime.now().isoformat(timespec="seconds"),
+                    "trade_date": trade_date, "rows": len(document["items"]),
+                    "source": "tushare " + (
+                        "daily" if kind == "daily" else "adj_factor"),
+                    "units": ({"ohlc": "元(不复权原价)", "pre_close": "元"}
+                              if kind == "daily" else {"adj_factor": "倍"}),
+                },
+                "fields": document["fields"], "items": document["items"],
+            })
+        DATA_DIR.mkdir(exist_ok=True)
+        atomic_write_json(f_daily, payloads[0])
+        atomic_write_json(f_adj, payloads[1])
+        return {"status": "ok", "trade_date": trade_date,
+                "daily_rows": len(rd["items"]), "adj_rows": len(ra["items"])}
+    except (ValueError, TypeError, KeyError, AttributeError, OSError):
         return {"status": "fail", "trade_date": trade_date,
-                "reason": f"daily={'None' if rd is None else 'ok'}, adj_factor={'None' if ra is None else 'ok'}"}
-    d_items = rd.get('items') or []
-    a_items = ra.get('items') or []
-    if not d_items:
-        return {"status": "fail", "trade_date": trade_date, "reason": "daily empty (非交易日?)"}
-    f_daily.write_text(json.dumps(
-        {"_meta": {"fetched_at": datetime.now().isoformat(timespec='seconds'),
-                    "trade_date": trade_date, "rows": len(d_items),
-                    "units": {"ohlc": "元(不复权原价)", "pre_close": "元(前收, 除权探测器)"},
-                    "source": "tushare daily"},
-         "fields": rd.get('fields', []), "items": d_items}, ensure_ascii=False), encoding='utf-8')
-    f_adj.write_text(json.dumps(
-        {"_meta": {"fetched_at": datetime.now().isoformat(timespec='seconds'),
-                    "trade_date": trade_date, "rows": len(a_items),
-                    "units": {"adj_factor": "倍(累计复权因子)"},
-                    "source": "tushare adj_factor"},
-         "fields": ra.get('fields', []), "items": a_items}, ensure_ascii=False), encoding='utf-8')
-    return {"status": "ok", "trade_date": trade_date,
-            "daily_rows": len(d_items), "adj_rows": len(a_items)}
+                "reason": "snapshot validation or persistence failed; existing files preserved where possible"}
 
 def cal_open_days(api, start, end):
     r = api('trade_cal', {'start_date': start, 'end_date': end}, 'exchange,cal_date,is_open')
@@ -111,7 +159,10 @@ def main():
             sys.exit("--backfill needs START END, e.g. --backfill 20260506 20260904")
         start, end = args[i + 1], args[i + 2]
         dates = cal_open_days(api, start, end)
-        print(f"calendar: {len(dates)} trading days, {dates[0]}..{dates[-1]}", flush=True)
+        if not dates:
+            sys.exit("trade calendar contains no confirmed open days")
+        print(f"calendar: {len(dates)} trading days, {dates[0]}..{dates[-1]}",
+              file=sys.stderr, flush=True)
     else:
         dates = [a for a in args if not a.startswith('--')]
         if not dates:
@@ -131,6 +182,8 @@ def main():
         save_state(state)
     results["watermark_count"] = len(state["pulled_dates"])
     print(json.dumps(results, ensure_ascii=False, indent=1))
+    if results["fail"]:
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

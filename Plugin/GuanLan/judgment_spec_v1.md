@@ -34,8 +34,22 @@ state: 盘后例行
 - STATE_MAP: {"盘后例行":"routine_after_close","盘中紧急":"intraday_urgent","勘误重写":"correction_rewrite","深夜":"late_night"}
 - timestamp取值：日记文件名时间戳（写入时刻），非判断产生时刻——判断产生时刻由state字段携带语义
 
-## 5. 勘误语义（corrects指针）
-判断写错不删不改：新块正常写，note字段或日记正文注明"更正YYYY-MM-DD某判断"，收割器按(symbol, window)取最新行。历史错误块留在日记里——它们是校准数据的一部分。
+## 4.5 paper-v0行（第二写入方规范，2026-10-14补）
+
+paper_buy带conviction参数时由paper_trading.py直写judgments（非日记收割路径），与§1-§4的〔JUDGE〕块是两条独立管道：
+- 必带字段差异：model_version="paper-v0"（settle双集合join按此分组，b334/b335——与real行'glm-5.3'等真实模型名互不覆盖）、group="exp|ctrl_a|ctrl_b"（三层采样分组统计）、source="paper-trade"、evidence="paper_snapshots/{时间戳}_{symbol}.json"（快照出生证指针，2026-08-21强制指针判例）
+- state格式："paper_{group}"（如paper_exp），STATE_MAP四值枚举之外的新值域——harvest收割器不处理此格式（它们不经日记），settle按model_version分组处理
+- direction恒="up"（paper_buy只有多头；conviction=paper判断的上涨概率，Brier按paper-v0组独立计分）
+- 结算：走settle_results双集合join（带mv三元组），与real判断同价同规则，月报paper/real分列
+- 写入时机：conviction缺失或非数值时judgments行跳过（仓位照常落账，回执judgment字段披露）
+
+## 5. 判断身份与勘误（2026-10-19新增，待统一验收）
+
+新判断块可增加`judgment_id: 唯一稳定ID`；不同ID代表独立样本，即使标的、窗口、模型相同也不互相覆盖。ID仅允许ASCII字母、数字及`_.:-`，首字符为字母或数字，最长128字符。模拟盘新判断以快照UUID生成ID；请求重放保留原ID。
+
+更正必须另写新块，具有新的judgment_id，并填写`corrects: 原判断ID`。目标须已存在或在本批导入，标的、窗口、模型和agent须一致，更正时间不得早于原判断；冲突ID、分叉或循环拒绝导入。更正只追加，不覆盖历史。结算结果透传judgment_id，校准只匹配该ID，不借用旧窗口结果。
+
+无ID历史行保留原三元组(symbol, window, model_version)最新时间规则，不自动迁移，也不能据此区分历史独立判断。note或正文中的“更正”文字不产生显式更正关系；要更正无ID存量须另行制定迁移方案，不由程序猜测。独立插件登记入口仍属#16，未在此实现。
 
 ## 6. 写作纪律（防我自己的13次伪发射线）
 - 块内数字全部当日已归payload：行情价、成本、止损距离，没有回执的数字不写

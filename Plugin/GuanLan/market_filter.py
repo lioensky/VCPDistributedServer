@@ -32,27 +32,54 @@ DATA_DIR = BASE / "market_data"
 BJ_RULE = {"exclude": True,
            "note": "观澜裁定二 2026-09-06: 北交所权限门槛50万资产量级 vs 账户总资产1.4万, 物理不可达; 若券商权限升级可从delisted标记捞回, 规则成本为零"}
 
-def load_snapshot(trade_date):
-    f = DATA_DIR / f"daily_basic_{trade_date}.json"
-    if not f.exists():
-        sys.exit(f"L0 snapshot missing: {f.name} - run market_snapshot.py {trade_date} first")
-    obj = json.loads(f.read_text(encoding='utf-8'))
-    flds = obj.get('fields', [])
-    if 'circ_mv' not in flds:
-        sys.exit(f"snapshot {f.name} is v1 (no circ_mv field) - re-pull with market_snapshot.py v2 first")
-    rows = [dict(zip(flds, it)) for it in obj.get('items', [])]
+def load_snapshot(trade_date, *, payload=None):
+    # The producer may validate an in-memory payload before persistence.
+    # Existing consumers retain the same single-argument read interface.
+    if payload is None:
+        f = DATA_DIR / f"daily_basic_{trade_date}.json"
+        if not f.exists():
+            sys.exit(f"L0 snapshot missing: {f.name} - run market_snapshot.py {trade_date} first")
+        obj = json.loads(f.read_text(encoding='utf-8'))
+    else:
+        obj = payload
+    if not isinstance(obj, dict):
+        raise ValueError("snapshot must be an object")
+    flds, items, meta = obj.get("fields"), obj.get("items"), obj.get("_meta")
+    if (not isinstance(flds, list)
+            or any(not isinstance(field, str) for field in flds)
+            or len(set(flds)) != len(flds)
+            or not {"ts_code", "circ_mv"}.issubset(flds)
+            or not isinstance(items, list) or not items
+            or not isinstance(meta, dict) or meta.get("trade_date") != trade_date):
+        raise ValueError("invalid snapshot date or schema")
+    rows, seen = [], set()
+    for item in items:
+        if not isinstance(item, (list, tuple)) or len(item) != len(flds):
+            raise ValueError("invalid snapshot row width")
+        row = dict(zip(flds, item))
+        code = row.get("ts_code")
+        if not isinstance(code, str) or not code or code in seen:
+            raise ValueError("invalid or duplicate snapshot code")
+        seen.add(code)
+        rows.append(row)
     return rows
 
 def is_bj(row):
     return row.get('ts_code', '').endswith('.BJ')
 
 def cmv_yi(row):  # circ_mv (万元) -> 亿元, PRIMARY
+    import math
     v = row.get('circ_mv')
-    return v / 10000.0 if isinstance(v, (int, float)) else None
+    return (v / 10000.0 if not isinstance(v, bool)
+            and isinstance(v, (int, float)) and math.isfinite(v) and v >= 0
+            else None)
 
 def tmv_yi(row):  # total_mv -> 亿元, reference only
+    import math
     v = row.get('total_mv')
-    return v / 10000.0 if isinstance(v, (int, float)) else None
+    return (v / 10000.0 if not isinstance(v, bool)
+            and isinstance(v, (int, float)) and math.isfinite(v) and v >= 0
+            else None)
 
 def split_pool(rows):
     """Returns (pool_non_bj, bj_rows). BJ ruled out at pool level."""
@@ -84,11 +111,30 @@ def stats_report(trade_date):
     out["exchange_distribution_non_bj"] = exch
     print(json.dumps(out, ensure_ascii=False, indent=1))
 
+ST_RULE = {"exclude": True,
+           "note": "34b修复(2026-09-29): ST/*ST/退市整理股不进漏斗. 识别源=industry_map.json name字段(L0快照五字段无name: ts_code/close/total_mv/circ_mv/pe). name缺失按非ST处理不误杀(宁漏勿误杀, meta计数披露). 实例: ST人福600079/ST诺泰688076混入final_pool_20260928"}
+
+def load_names():
+    f = DATA_DIR / "industry_map.json"
+    if f.exists():
+        try:
+            return {k: v.get('name', '') for k, v in json.loads(f.read_text(encoding='utf-8')).items()}
+        except (json.JSONDecodeError, OSError):
+            pass
+    return {}
+
+def is_st(row, names):
+    n = names.get(row.get('ts_code', ''), '')
+    return n.startswith(('ST', '*ST', '退'))
+
 def run_filter(trade_date, min_mv_yi):
     rows = load_snapshot(trade_date)
+    names = load_names()
     pool, bj = split_pool(rows)
-    none_circ_rows = [r for r in pool if cmv_yi(r) is None]
-    kept = [r for r in pool if (cmv_yi(r) or 0) >= min_mv_yi]
+    st_rows = [r for r in pool if is_st(r, names)]
+    non_st = [r for r in pool if not is_st(r, names)]
+    none_circ_rows = [r for r in non_st if cmv_yi(r) is None]
+    kept = [r for r in non_st if (cmv_yi(r) or 0) >= min_mv_yi]
     exch_after = {}
     for r in kept:
         e = exchange_of(r.get('ts_code', ''))
@@ -96,18 +142,21 @@ def run_filter(trade_date, min_mv_yi):
     payload = {"_meta": {"generated_at": datetime.now().isoformat(timespec='seconds'),
                           "trade_date": trade_date,
                           "source_snapshot": f"daily_basic_{trade_date}.json",
-                          "layer": "L1 v2 market-cap filter",
+                          "layer": "L1 v2.1 market-cap + ST filter",
                           "metric_primary": "circ_mv (观澜裁定一 2026-09-06)",
                           "min_circ_mv_yi": min_mv_yi,
                           "total_rows": len(rows),
                           "bj_excluded": len(bj), "bj_rule": BJ_RULE,
-                          "pool_non_bj": len(pool),
+                          "st_excluded": len(st_rows), "st_rule": ST_RULE,
+                          "pool_non_bj": len(pool), "pool_after_st": len(non_st),
+                          "name_missing_in_map": len([r for r in pool if r.get('ts_code') not in names]),
                           "none_circ_mv_dropped": len(none_circ_rows),
                           "none_note": "无流通市值数据的行按0剔除并计数 (宁缺毋假; Nova r6 finding-1)",
-                          "kept": len(kept), "dropped_by_threshold": len(pool) - len(none_circ_rows) - len(kept)},
+                          "kept": len(kept), "dropped_by_threshold": len(non_st) - len(none_circ_rows) - len(kept)},
                "items": kept}
     out_file = DATA_DIR / f"screened_{trade_date}_circ{min_mv_yi:g}.json"
-    out_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    from ledger_io import atomic_write_json
+    atomic_write_json(out_file, payload)
     print(json.dumps({"status": "ok", "trade_date": trade_date,
                        "metric": "circ_mv", "min_mv_yi": min_mv_yi,
                        "total": len(rows), "bj_excluded": len(bj),

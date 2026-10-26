@@ -40,23 +40,50 @@ def _get_api():
 def load_state():
     if STATE_FILE.exists():
         try:
-            return json.loads(STATE_FILE.read_text(encoding='utf-8'))
-        except (json.JSONDecodeError, OSError):
+            state = json.loads(STATE_FILE.read_text(encoding='utf-8'))
+            if not isinstance(state, dict):
+                return {"pulled_dates": []}
+            dates = state.get("pulled_dates")
+            if not isinstance(dates, list):
+                return {"pulled_dates": []}
+            for day in dates:
+                if (not isinstance(day, str) or len(day) != 8
+                        or not day.isascii() or not day.isdigit()
+                        or datetime.strptime(day, "%Y%m%d").strftime("%Y%m%d") != day):
+                    return {"pulled_dates": []}
+            return {"pulled_dates": sorted(set(dates))}
+        except (ValueError, TypeError, OSError):
             pass
     return {"pulled_dates": []}
 
 def save_state(state):
     DATA_DIR.mkdir(exist_ok=True)
-    STATE_FILE.write_text(json.dumps(state, ensure_ascii=False, indent=1), encoding='utf-8')
+    from ledger_io import atomic_write_json
+    atomic_write_json(STATE_FILE, state)
 
 def snapshot(trade_date, api):
+    if (not isinstance(trade_date, str) or len(trade_date) != 8
+            or not trade_date.isascii() or not trade_date.isdigit()
+            or datetime.strptime(trade_date, "%Y%m%d").strftime("%Y%m%d") != trade_date):
+        raise ValueError("invalid snapshot trade date")
     DATA_DIR.mkdir(exist_ok=True)  # L0 fix 2026-09-06: mkdir previously only in save_state/refresh_delisted which run AFTER snapshot - first-run ordering crash
     out_file = DATA_DIR / f"daily_basic_{trade_date}.json"
     if out_file.exists():
-        return {"status": "skip", "reason": "already pulled", "file": out_file.name}
+        # Reuse the downstream contract rather than treating existence as success.
+        import market_filter
+        if market_filter.DATA_DIR.resolve() != DATA_DIR.resolve():
+            raise ValueError("snapshot validator directory mismatch")
+        try:
+            market_filter.load_snapshot(trade_date)
+        except (Exception, SystemExit):
+            return {"status": "fail", "reason": "existing snapshot invalid; preserved",
+                    "file": out_file.name}
+        return {"status": "skip", "reason": "validated existing snapshot",
+                "file": out_file.name}
     r = api('daily_basic', {'trade_date': trade_date}, FIELDS_DAILY)
-    if r is None:
-        return {"status": "fail", "reason": "api returned None (auth/network, see log)", "trade_date": trade_date}
+    if not isinstance(r, dict):
+        return {"status": "fail", "reason": "API response unavailable or invalid",
+                "trade_date": trade_date}
     items = r.get('items') or []
     if not items:
         return {"status": "fail", "reason": "empty items (non-trading day or auth issue)", "trade_date": trade_date}
@@ -66,28 +93,66 @@ def snapshot(trade_date, api):
                           "source": "tushare daily_basic"},
                "fields": r.get('fields', []),
                "items": items}
-    out_file.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    import market_filter
+    try:
+        market_filter.load_snapshot(trade_date, payload=payload)
+    except (Exception, SystemExit):
+        return {"status": "fail", "reason": "new snapshot failed schema validation",
+                "trade_date": trade_date}
+    from ledger_io import atomic_write_json
+    atomic_write_json(out_file, payload)
     return {"status": "ok", "rows": len(items), "file": out_file.name}
 
 def refresh_delisted(api):
     prev = 0
     if DELISTED_FILE.exists():
         try:
-            prev = json.loads(DELISTED_FILE.read_text(encoding='utf-8')).get('_meta', {}).get('rows', 0)
-        except (json.JSONDecodeError, OSError):
+            previous = json.loads(DELISTED_FILE.read_text(encoding='utf-8'))
+            meta = previous.get("_meta") if isinstance(previous, dict) else None
+            count = meta.get("rows") if isinstance(meta, dict) else None
+            prev = count if type(count) is int and count >= 0 else 0
+        except (ValueError, OSError):
             pass
     r = api('stock_basic', {'list_status': 'D'}, 'ts_code,name,list_date,delist_date')
-    if r is None:
-        return {"status": "fail", "reason": "api returned None", "prev_rows": prev}
-    items = r.get('items') or []
-    if not items:
-        return {"status": "fail", "reason": "empty items", "prev_rows": prev}
+    if not isinstance(r, dict):
+        return {"status": "fail", "reason": "API response unavailable or invalid",
+                "prev_rows": prev}
+    items = r.get("items")
+    fields = r.get("fields")
+    try:
+        if (not isinstance(fields, list)
+                or any(not isinstance(field, str) for field in fields)
+                or len(set(fields)) != len(fields)
+                or not {"ts_code", "name", "list_date", "delist_date"}.issubset(fields)
+                or not isinstance(items, list) or not items):
+            raise ValueError("invalid delisted schema")
+        seen = set()
+        today = datetime.now().date()
+        for item in items:
+            if not isinstance(item, (list, tuple)) or len(item) != len(fields):
+                raise ValueError("invalid delisted row")
+            row = dict(zip(fields, item))
+            code = row.get("ts_code")
+            if not isinstance(code, str) or not code or code in seen:
+                raise ValueError("invalid or duplicate delisted code")
+            seen.add(code)
+            raw_day = row.get("delist_date")
+            if (not isinstance(raw_day, str) or len(raw_day) != 8
+                    or not raw_day.isascii() or not raw_day.isdigit()):
+                raise ValueError("invalid delisting date")
+            delisted_on = datetime.strptime(raw_day, "%Y%m%d").date()
+            if delisted_on > today:
+                raise ValueError("future delisting date")
+    except (ValueError, TypeError, OverflowError):
+        return {"status": "fail", "reason": "invalid delisted response; old registry preserved",
+                "prev_rows": prev}
     payload = {"_meta": {"fetched_at": datetime.now().isoformat(timespec='seconds'),
                           "rows": len(items), "source": "tushare stock_basic list_status=D"},
                "fields": r.get('fields', []),
                "items": items}
     DATA_DIR.mkdir(exist_ok=True)
-    DELISTED_FILE.write_text(json.dumps(payload, ensure_ascii=False), encoding='utf-8')
+    from ledger_io import atomic_write_json
+    atomic_write_json(DELISTED_FILE, payload)
     return {"status": "ok", "rows": len(items), "prev_rows": prev, "delta": len(items) - prev}
 
 def main():
@@ -109,7 +174,11 @@ def main():
         save_state(state)
     results['delisted'] = refresh_delisted(api)
     results['watermark'] = {"pulled_dates": state['pulled_dates']}
-    print(json.dumps(results, ensure_ascii=False, indent=1))
+    print(json.dumps(results, ensure_ascii=False, indent=1, allow_nan=False))
+    if (any(results["snapshot_" + d].get("status") not in ("ok", "skip")
+            for d in dates)
+            or results["delisted"].get("status") not in ("ok", "skip")):
+        sys.exit(1)
 
 if __name__ == '__main__':
     main()

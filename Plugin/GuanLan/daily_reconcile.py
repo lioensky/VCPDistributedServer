@@ -3,7 +3,9 @@
 Mechanical integrity checks; standalone-runnable now, AutoScheduler mount planned with 22a.
 
 Checks:
-  T1 funding triangle : available_cash + sum(position cost*shares) == total_capital (tol 0.01)
+  T1 funding triangle : cash + active position cost == capital + realized PnL (tol 0.01).
+       Assumes complete trade history, fee-inclusive costs/PnL, and a reconciled
+       capital anchor. External cash flows must be reconciled separately.
   T2 replay sync      : per symbol, sum(buy shares) - sum(sell shares) == held shares (or 0)
   T3 staleness        : account.updated older than 10 days -> status WARN + manual-verify note
 
@@ -26,23 +28,71 @@ STALE_DAYS = 10
 def load(p):
     return json.loads(p.read_text(encoding="utf-8")) if p.exists() else None
 
-def main():
+def _main_locked():
     account = load(BASE / "account.json")
-    positions = load(BASE / "positions.json") or {"positions": []}
-    trades = load(BASE / "trades.json") or []
+    positions = load(BASE / "positions.json")
+    trades = load(BASE / "trades.json")
+    import math
+
+    def number(value, positive=False):
+        if (isinstance(value, bool) or not isinstance(value, (int, float))
+                or not math.isfinite(value) or (positive and value <= 0)):
+            raise ValueError("invalid reconciliation numeric field")
+        return value
+
+    if (not isinstance(account, dict)
+            or not isinstance(positions, dict)
+            or not isinstance(positions.get("positions"), list)
+            or not isinstance(trades, list)):
+        raise ValueError("missing or invalid reconciliation ledgers")
+    number(account.get("available_cash"))
+    if number(account.get("total_capital")) < 0:
+        raise ValueError("invalid capital anchor")
+    for position in positions["positions"]:
+        if (not isinstance(position, dict)
+                or not isinstance(position.get("symbol"), str)
+                or not position["symbol"]
+                or position.get("status") not in ("active", "closed")):
+            raise ValueError("invalid reconciliation position")
+        if position["status"] == "active":
+            quantity = position.get("shares")
+            if isinstance(quantity, bool) or not isinstance(quantity, int) or quantity <= 0:
+                raise ValueError("invalid reconciliation position quantity")
+            number(position.get("cost"), positive=True)
+    for trade in trades:
+        if not isinstance(trade, dict):
+            raise ValueError("invalid reconciliation trade row")
+        if trade.get("action") not in ("buy", "sell"):
+            continue
+        quantity = trade.get("shares")
+        if (not isinstance(trade.get("symbol"), str) or not trade["symbol"]
+                or isinstance(quantity, bool) or not isinstance(quantity, int)
+                or quantity <= 0):
+            raise ValueError("invalid reconciliation trade identity or quantity")
+        if trade["action"] == "sell":
+            number(trade.get("pnl"))
 
     r = {"run_date": str(date.today()), "checks": {}}
     fails = []
 
     # T1 funding triangle
     if account:
-        pos_cost = sum(p.get("cost", 0) * p.get("shares", 0) for p in positions.get("positions", []))
-        lhs = account.get("available_cash", 0) + pos_cost
-        rhs = account.get("total_capital", 0)
+        pos_cost = sum(
+            p["cost"] * p["shares"]
+            for p in positions.get("positions", [])
+            if p.get("status") == "active")
+        realized = sum(t["pnl"] for t in trades if t.get("action") == "sell")
+        capital = account["total_capital"]
+        lhs = account["available_cash"] + pos_cost
+        rhs = capital + realized
         ok = abs(lhs - rhs) <= TOL
-        r["checks"]["T1_triangle"] = {"pass": ok, "cash": account.get("available_cash"),
-                                      "position_cost": round(pos_cost, 2),
-                                      "total_capital": rhs, "diff": round(rhs - lhs, 2)}
+        r["checks"]["T1_triangle"] = {
+            "pass": ok, "cash": account["available_cash"],
+            "position_cost": round(pos_cost, 2),
+            "total_capital": capital, "realized_pnl": round(realized, 2),
+            "expected_book_equity": round(rhs, 2),
+            "diff": round(rhs - lhs, 2),
+            "scope": "完整交易历史、含费成本和已核对本金；不证明外部资金流完整"}
         if not ok:
             fails.append("T1")
     else:
@@ -52,9 +102,17 @@ def main():
     # T2 replay sync
     flows = {}
     for t in trades:
-        s = t.get("symbol")
-        flows[s] = flows.get(s, 0) + (t.get("shares", 0) if t.get("action") == "buy" else -t.get("shares", 0))
-    pos_map = {p.get("symbol"): p.get("shares", 0) for p in positions.get("positions", [])}
+        action = t.get("action")
+        if action not in ("buy", "sell"):
+            continue
+        s = t["symbol"]
+        flows[s] = flows.get(s, 0) + (
+            t["shares"] if action == "buy" else -t["shares"])
+    pos_map = {}
+    for p in positions.get("positions", []):
+        if p.get("status") == "active":
+            s = p["symbol"]
+            pos_map[s] = pos_map.get(s, 0) + p["shares"]
     detail, ok_all = {}, True
     for s, net in flows.items():
         held = pos_map.get(s, 0)
@@ -90,6 +148,18 @@ def main():
     r["status"] = "FAIL" if fails else ("WARN" if stale else "PASS")
     print(json.dumps(r, ensure_ascii=False, indent=2))
     sys.exit(1 if fails else 0)
+
+def main():
+    from filelock import FileLock
+    from real_ledger import access
+    paths = (
+        BASE / "positions.json", BASE / "trades.json", BASE / "account.json")
+    lock = FileLock(str(BASE / "guanlan.lock"), timeout=60)
+    # Recover before reading; hold the writer's lock across all checks.
+    # No account initialization or ledger correction is performed here.
+    with access(paths, lock):
+        return _main_locked()
+
 
 if __name__ == "__main__":
     main()
