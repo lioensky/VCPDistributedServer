@@ -3,6 +3,7 @@ import { createRequire } from 'module';
 import * as fs from 'fs/promises';
 import * as path from 'path';
 import dotenv from 'dotenv';
+import { fileURLToPath } from 'url';
 
 const require = createRequire(import.meta.url);
 const { MidiQuantizer } = require('./midi_quantizer.node');
@@ -11,7 +12,7 @@ let serverConfig = {};
 let pluginConfig = {};  // 新增：插件配置存储
 let sendVcpLog;
 
-const __dirname = path.dirname(new URL(import.meta.url).pathname);
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const inputDir = path.join(__dirname, 'midi-input');
 const defaultOutputDir = path.join(__dirname, 'midi-output');  // 默认目录
 
