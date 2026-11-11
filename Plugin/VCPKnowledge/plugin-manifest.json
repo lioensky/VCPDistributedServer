@@ -1,0 +1,131 @@
+{
+  "manifestVersion": "1.0.0",
+  "name": "VCPKnowledge",
+  "version": "2.6.0",
+  "displayName": "全域冷知识库雷达与按需查阅 (VCPKnowledge)",
+  "description": "使用单一占位符联通全部 TriviumDB 冷知识库，采用 L0/L1/L2 三级自适应门控与跨 Embedding 模型 Z-Score+MAD 鲁棒校准，高亮显示 Top-K 相关文档与焦点节号坐标，并提供按坐标原文直读 (read)、章节目录预览 (toc) 与跨库混合检索 (search) 工具。v2.5.0 融合 RiverMemo 浪潮拓扑思想：章节标题层级 TF 加权 (V1) 与概念共现河道传播 (V2)，严格稀疏门控下提供封顶 tie-breaker 路径奖励。v2.6.0 完成扩库三步：分库共现分片、概念粒度随规模自适应收紧（minDf=√(N/50) 封顶）、固定出流预算与 CSR TypedArray 压缩，万篇级实测内存 48MB、拓扑重建 65ms、传播查询 49ms。",
+  "author": "VCPKnowledge contributors",
+  "icon": "radar",
+  "category": "information-retrieval",
+  "license": "MIT",
+  "pluginType": "hybridservice",
+  "requiresJevClient": true,
+  "entryPoint": {
+    "script": "VCPKnowledge.js"
+  },
+  "communication": {
+    "protocol": "direct",
+    "timeout": 60000
+  },
+  "configSchema": {
+    "RADAR_TOP_DOCS": {
+      "type": "integer",
+      "description": "每轮对话雷达高亮显示的最大文档数",
+      "default": 5
+    },
+    "RADAR_PINPOINT_CHUNKS": {
+      "type": "integer",
+      "description": "每篇高亮文档定位显示的最大焦点节数",
+      "default": 2
+    },
+    "RADAR_SNIPPET_CHARS": {
+      "type": "integer",
+      "description": "雷达中每个高亮位置的微预览字符数",
+      "default": 110
+    },
+    "RADAR_MIN_SCORE": {
+      "type": "number",
+      "description": "雷达 L1 坐标激活阈值（低于此值进入 L0 单行静默省流态）",
+      "default": 0.48
+    },
+    "RADAR_INLINE_SCORE": {
+      "type": "number",
+      "description": "雷达 L2 焦点原文直通阈值（高于此值自动为榜首文档内联焦点章节原文）",
+      "default": 0.65
+    },
+    "AUTO_SYNC_BATCH_SIZE": {
+      "type": "integer",
+      "description": "检测到新入库或切换向量维度时单轮后台自动构建路由卡片的最大篇数",
+      "default": 12
+    },
+    "AUTO_LLM_SUMMARY": {
+      "type": "boolean",
+      "description": "新文档入库构建路由卡片时是否启用轻量模型提炼高密度语义摘要",
+      "default": true
+    },
+    "ROUTER_SUMMARY_MODEL": {
+      "type": "string",
+      "description": "用于提炼路由卡片的轻量非思考模型名（留空则复用全局 JevModel，不可用时自动回退至规则五段采样）",
+      "default": ""
+    },
+    "CUSTOM_LIBRARY_ALIASES": {
+      "type": "string",
+      "description": "自定义知识库触发别名（格式：库名1:别名a,别名b;库名2:别名c,别名d 或 JSON 对象）",
+      "default": ""
+    },
+    "TOPOLOGY_PROPAGATION": {
+      "type": "boolean",
+      "description": "是否启用河道传播（概念共现拓扑路径奖励，借鉴 RiverMemo 浪潮拓扑）",
+      "default": true
+    },
+    "TOPOLOGY_PATH_BONUS_MAX": {
+      "type": "number",
+      "description": "河道传播路径奖励上限（tie-breaker，永不压过 BM25/向量主证据）",
+      "default": 0.08
+    },
+    "TOPOLOGY_HEADING_TF_BOOST": {
+      "type": "integer",
+      "description": "章节目录标题在 BM25 索引中的词频加成倍数（V1 层级加权）",
+      "default": 2
+    },
+    "TOPOLOGY_MAX_CONCEPTS": {
+      "type": "integer",
+      "description": "每篇文档参与拓扑构建的 IDF Top-N 概念数上限",
+      "default": 24
+    },
+    "TOPOLOGY_SPARSE_TOP_SCORE": {
+      "type": "number",
+      "description": "稀疏门控：榜首基础分低于此值时才允许河道传播（资料充分不触发）",
+      "default": 0.60
+    },
+    "TOPOLOGY_SPARSE_MIN_HITS": {
+      "type": "integer",
+      "description": "稀疏门控：查询命中拓扑概念的最少入口数",
+      "default": 2
+    },
+    "TOPOLOGY_MAX_OUTFLOW": {
+      "type": "integer",
+      "description": "拓扑出流预算：每概念保留的权重 Top-K 邻居数上限（内存硬上限=概念数×K）",
+      "default": 32
+    },
+    "TOPOLOGY_MIN_DF_CAP": {
+      "type": "integer",
+      "description": "自适应概念粒度的最小df封顶值（实际minDf=max(2, min(此值, √(N/50)))，随库规模自动收紧）",
+      "default": 16
+    }
+  },
+  "capabilities": {
+    "invocationCommands": [
+      {
+        "commandIdentifier": "ReadKnowledge",
+        "command": "read",
+        "description": "按知识库雷达高亮显示的坐标（doc + chunk）直接读取指定文档或指定节的完整原文（零向量开销，支持连读多节如 chunk='0-2' 或 '1,4'）。\n参数:\n- doc (字符串, 必需): 文档路径或文件名关键词（直接复制雷达高亮显示的 doc 值）。\n- chunk (字符串, 可选): 要读取的节号，如 '0'、'0-2'、'3,5'、'all'。不填则默认读取前 2 节。\n- library (字符串, 可选): 限定知识库名称。"
+      },
+      {
+        "commandIdentifier": "TocKnowledge",
+        "command": "toc",
+        "description": "查看指定文档的完整分节目录（每节编号 #0~#N 与开头摘要），或查看全域/指定知识库的文档清单（不传 doc 时）。\n参数:\n- doc (字符串, 可选): 文档路径或文件名关键词。不填则列出知识库文档清单。\n- library (字符串, 可选): 限定知识库名称。"
+      },
+      {
+        "commandIdentifier": "SearchKnowledge",
+        "command": "search",
+        "description": "在全部或指定冷知识库中按需执行混合检索（路由初筛 + 向量探针 + 词法融合），返回完整知识片段正文。\n参数:\n- query (字符串, 必需): 检索关键词、问题或章节。\n- library (字符串, 可选): 限定知识库名称（支持逗号或竖线分隔多库；不填则自动路由全库）。\n- doc (字符串, 可选): 限定在某篇文档内检索。\n- k (数字, 可选): 返回片段数，默认 4。"
+      },
+      {
+        "commandIdentifier": "RadarKnowledge",
+        "command": "radar",
+        "description": "手动触发全域冷知识库 L0/L1/L2 路由雷达，返回 Top-K 高亮文档坐标与焦点节号。\n参数:\n- query (字符串, 必需): 话题或检索问题。\n- library (字符串, 可选): 限定知识库名称。\n- k (数字, 可选): 最大高亮文档数，默认 5。"
+      }
+    ]
+  }
+}
