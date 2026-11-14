@@ -417,6 +417,17 @@
       "icon": "extension",
       "category": "information-retrieval",
       "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/ZhihuSearch/ZhihuSearch.zip"
+    },
+    {
+      "name": "VCPKnowledge",
+      "displayName": "全域冷知识库雷达与按需查阅 (VCPKnowledge)",
+      "description": "使用单一占位符联通全部 TriviumDB 冷知识库，采用 L0/L1/L2 三级自适应门控与跨 Embedding 模型 Z-Score+MAD 鲁棒校准，高亮显示 Top-K 相关文档与焦点节号坐标，并提供按坐标原文直读 (read)、章节目录预览 (toc) 与跨库混合检索 (search) 工具。v2.5.0 融合 RiverMemo 浪潮拓扑思想：章节标题层级 TF 加权 (V1) 与概念共现河道传播 (V2)，严格稀疏门控下提供封顶 tie-breaker 路径奖励。v2.6.0 完成扩库三步：分库共现分片、概念粒度随规模自适应收紧（minDf=√(N/50) 封顶）、固定出流预算与 CSR TypedArray 压缩，万篇级实测内存 48MB、拓扑重建 65ms、传播查询 49ms。",
+      "version": "2.6.0",
+      "author": "VCPKnowledge contributors",
+      "icon": "radar",
+      "category": "information-retrieval",
+      "license": "MIT",
+      "downloadUrl": "https://raw.githubusercontent.com/lioensky/VCPDistributedServer/main/Plugin/VCPKnowledge/VCPKnowledge.zip"
     }
   ]
 }
